@@ -1,3 +1,10 @@
+# 1.0.0 (2025-11-20)
+
+
+### Bug Fixes
+
+* **security:** initial release with DNS rebinding prevention ([853611a](https://github.com/aself101/ideogram-api/commit/853611afaf7c45615ac569c94531a45f5bdcfbbd))
+
 # Changelog
 
 All notable changes to the Ideogram API project will be documented in this file.
