@@ -1,326 +1,998 @@
 # Ideogram API - Node.js Wrapper
 
-Node.js wrapper for the [Ideogram API](https://ideogram.ai/api), providing a comprehensive interface for AI-powered image generation, editing, remixing, and manipulation.
+[![npm version](https://img.shields.io/npm/v/ideogram-api.svg)](https://www.npmjs.com/package/ideogram-api)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node.js Version](https://img.shields.io/node/v/ideogram-api)](https://nodejs.org)
+[![Tests](https://img.shields.io/badge/tests-203%20passing-brightgreen)](test/)
 
-## Features
+A Node.js wrapper for the [Ideogram API](https://ideogram.ai/api) that provides comprehensive access to AI-powered image generation, editing, remixing, and manipulation. Generate, edit, upscale, and transform images with 62 style presets through a simple command-line interface.
 
-- **Generate**: Text-to-image generation with Ideogram 3.0
-- **Edit**: Image editing with masks and natural language prompts
-- **Remix**: Transform images while preserving characteristics
-- **Reframe**: Change aspect ratios of square images
-- **Replace Background**: Intelligent background replacement
-- **Upscale**: High-quality image upscaling
-- **Describe**: Get AI-generated image descriptions
+This service follows the data-collection architecture pattern with organized data storage, synchronous responses, comprehensive logging, and CLI orchestration.
 
-All operations are **synchronous** (no polling required) and include comprehensive security features.
+## Quick Demo
 
-## Installation
-
-```bash
-npm install ideogram-api
-```
+**Coming Soon:** Asciinema CLI demo showcasing all 7 operations
 
 ## Quick Start
 
 ### CLI Usage
-
 ```bash
-# Set your API key
-export IDEOGRAM_API_KEY=your_api_key
+# Install globally
+npm install -g ideogram-api
 
-# Show help (default behavior when no arguments provided)
-ideogram
-
-# View usage examples
-ideogram --examples
-
-# Discover available options
-ideogram list-style-presets     # 62 style presets
-ideogram list-aspect-ratios     # 15 aspect ratios
-ideogram list-resolutions       # 69 resolutions
+export IDEOGRAM_API_KEY="your-api-key"
 
 # Generate an image
 ideogram generate --prompt "A serene mountain landscape"
-
-# Edit an image
-ideogram edit --prompt "Change sky to sunset" --image photo.jpg --mask mask.png
-
-# Remix an image
-ideogram remix --prompt "Watercolor style" --image photo.jpg
-
-# Upscale an image
-ideogram upscale --image low_res.jpg --resemblance 85 --detail 90
-
-# Get image description
-ideogram describe --image photo.jpg
 ```
 
-## Image Requirements
-
-- **Supported formats**: PNG, JPEG, WebP, and GIF are accepted for operations that upload images (edit, remix, reframe, replace background, upscale, describe).
-- **Square images for Reframe**: The reframe endpoint only accepts perfectly square inputs. The CLI and API now validate dimensions locally to prevent wasted API calls.
-
 ### Programmatic Usage
-
 ```javascript
 import { IdeogramAPI } from 'ideogram-api';
 
 const api = new IdeogramAPI('your_api_key');
 
-// Generate images
+// Generate image (synchronous - no polling needed!)
 const response = await api.generate({
   prompt: 'A serene mountain landscape at sunset',
-  aspectRatio: '16:9',
-  renderingSpeed: 'QUALITY',
-  numImages: 2
+  aspectRatio: '16x9',
+  renderingSpeed: 'QUALITY'
 });
 
-// Edit image with mask
+console.log('Generated images:', response.data);
+```
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Operations](#operations)
+- [Authentication Setup](#authentication-setup)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [CLI Usage](#cli-usage)
+- [API Methods](#api-methods)
+- [Examples](#examples)
+- [Data Organization](#data-organization)
+- [Security Features](#security-features)
+- [Error Handling](#error-handling)
+- [Troubleshooting](#troubleshooting)
+- [CLI Helper Commands](#cli-helper-commands)
+- [Style Presets](#style-presets)
+
+## Overview
+
+The Ideogram API provides access to state-of-the-art image generation and manipulation. This Node.js service implements:
+
+- **7 Operations** - Generate, Edit, Remix, Reframe, Replace Background, Upscale, Describe
+- **62 Style Presets** - More artistic styles than any other service
+- **Synchronous Responses** - All operations return immediately (no polling required!)
+- **Production Security** - API key redaction, error sanitization, HTTPS enforcement, comprehensive SSRF protection (including IPv4-mapped IPv6 bypass prevention)
+- **DoS Prevention** - Request timeouts (120s API, 60s downloads), file size limits (50MB), redirect limits
+- **DNS Rebinding Prevention** - Blocks domains resolving to internal IPs (prevents TOCTOU attacks)
+- **Parameter Validation** - Pre-flight validation catches invalid parameters before API calls
+- **API Key Authentication** - Multiple configuration methods with secure handling
+- **Batch Processing** - Generate multiple images sequentially from multiple prompts
+- **Helper Commands** - Easy discovery with list-style-presets, list-aspect-ratios, list-resolutions
+- **Image Input Support** - Convert local files or URLs to Buffers with validation
+- **Organized Storage** - Structured directories with timestamped files and metadata
+- **CLI Orchestration** - Command-line tool for easy batch processing
+- **Comprehensive Testing** - 203 tests with Vitest for reliability
+
+## Operations
+
+### Generate (Text-to-Image)
+
+Generate images from text prompts with Ideogram 3.0's powerful model.
+
+**Features:**
+- 62 style presets (TRAVEL_POSTER, DRAMATIC_CINEMA, WATERCOLOR, etc.)
+- Magic Prompt auto-enhancement
+- 4 rendering speeds (FLASH, TURBO, DEFAULT, QUALITY)
+- Custom aspect ratios and resolutions
+- Negative prompts
+- Seed control for reproducibility
+
+**Use Cases:** Marketing materials, social media content, concept art, illustrations
+
+### Edit (Image Editing with Mask)
+
+Edit specific parts of images using masks and natural language prompts.
+
+**Features:**
+- Mask-based editing
+- Natural language instructions
+- Style preset support
+- Multiple variations
+
+**Use Cases:** Product photography touch-ups, background changes, object removal, selective enhancement
+
+### Remix (Image-to-Image)
+
+Transform images while preserving certain characteristics with adjustable image weight.
+
+**Features:**
+- Image weight control (0-100)
+- Style transfer
+- Aspect ratio changes
+- Multiple variations
+
+**Use Cases:** Style transfer, artistic transformations, design variations
+
+### Reframe (Aspect Ratio Change)
+
+Intelligently reframe square images to different aspect ratios.
+
+**Features:**
+- Smart content-aware reframing
+- Multiple output resolutions
+- Style preset support
+
+**Use Cases:** Social media reformatting, banner creation, responsive design assets
+
+**Note:** Only accepts perfectly square input images (validated locally)
+
+### Replace Background
+
+Replace image backgrounds while intelligently preserving foreground subjects.
+
+**Features:**
+- Automatic subject detection
+- Natural language background description
+- Style control
+- Multiple variations
+
+**Use Cases:** Product photography, portrait backgrounds, e-commerce images
+
+### Upscale
+
+High-quality image upscaling with optional prompt-guided enhancement.
+
+**Features:**
+- Resemblance control (0-100)
+- Detail enhancement (0-100)
+- Optional prompt guidance
+- Up to 4 variations
+
+**Use Cases:** Print preparation, detail enhancement, resolution increase
+
+### Describe
+
+Get AI-generated descriptions of images using Ideogram's vision model.
+
+**Features:**
+- Two model versions (V_2, V_3)
+- Detailed natural language descriptions
+- Multiple descriptions per image
+
+**Use Cases:** Alt text generation, image cataloging, accessibility, content moderation
+
+## Authentication Setup
+
+### 1. Get Your API Key
+
+Visit [https://ideogram.ai/api](https://ideogram.ai/api) to create an account and generate your API key.
+
+### 2. Configure Your API Key
+
+The API key can be provided in multiple ways (listed by priority):
+
+#### Option A: CLI Flag (Highest Priority)
+
+```bash
+ideogram --api-key YOUR_KEY generate --prompt "landscape"
+```
+
+#### Option B: Environment Variable
+
+```bash
+export IDEOGRAM_API_KEY=your_api_key
+ideogram generate --prompt "landscape"
+```
+
+#### Option C: Local .env File (Project-Specific)
+
+Create `.env` in your project directory:
+
+```bash
+IDEOGRAM_API_KEY=your_api_key
+```
+
+#### Option D: Global Config (For Global npm Installs)
+
+```bash
+mkdir -p ~/.ideogram
+echo "IDEOGRAM_API_KEY=your_api_key" > ~/.ideogram/.env
+```
+
+## Installation
+
+### Option 1: Install from npm
+
+```bash
+# Install globally for CLI usage
+npm install -g ideogram-api
+
+# Or install locally for programmatic usage
+npm install ideogram-api
+```
+
+### Option 2: Install from source
+
+```bash
+git clone https://github.com/aself101/ideogram-api.git
+cd ideogram-api
+npm install
+npm link  # For global CLI access
+```
+
+## Quick Start
+
+### Using the CLI
+
+```bash
+# Show help
+ideogram
+
+# Show examples
+ideogram --examples
+
+# Discover available options
+ideogram list-style-presets
+ideogram list-aspect-ratios
+ideogram list-resolutions
+
+# Generate an image
+ideogram generate --prompt "A serene Japanese zen garden"
+
+# Generate with style
+ideogram generate \
+  --prompt "Vintage travel poster of Paris" \
+  --style-preset TRAVEL_POSTER \
+  --aspect-ratio "16x9"
+
+# Upscale an image
+ideogram upscale \
+  --image ./photo.jpg \
+  --resemblance 90 \
+  --detail 85
+```
+
+### Example Commands
+
+```bash
+# Basic generation
+ideogram generate --prompt "sunset over mountains"
+
+# High-quality with specific style
+ideogram generate \
+  --prompt "Cyberpunk city at night" \
+  --rendering-speed QUALITY \
+  --style-preset DRAMATIC_CINEMA \
+  --aspect-ratio "21x9"
+
+# Batch generation with negative prompts
+ideogram generate \
+  --prompt "Portrait of a cat" \
+  --prompt "Portrait of a dog" \
+  --negative-prompt "blurry, low quality"
+
+# Edit with mask
+ideogram edit \
+  --prompt "Change sky to sunset" \
+  --image photo.jpg \
+  --mask sky_mask.png
+
+# Remix with style transfer
+ideogram remix \
+  --prompt "Watercolor painting style" \
+  --image photo.jpg \
+  --image-weight 75
+
+# Replace background
+ideogram replace-background \
+  --prompt "Tropical beach at sunset" \
+  --image portrait.jpg
+
+# Describe image
+ideogram describe --image photo.jpg
+```
+
+### Using the API Class Directly
+
+```javascript
+import { IdeogramAPI, extractImages, extractDescriptions } from 'ideogram-api';
+
+const api = new IdeogramAPI('your_api_key');
+
+// Generate with all options
+const response = await api.generate({
+  prompt: 'A serene mountain landscape at sunset',
+  aspectRatio: '16x9',
+  renderingSpeed: 'QUALITY',
+  stylePreset: 'DRAMATIC_CINEMA',
+  magicPrompt: 'ON',
+  numImages: 2,
+  seed: 12345
+});
+
+const images = extractImages(response);
+console.log(`Generated ${images.length} images`);
+
+// Edit image
 const editResponse = await api.edit({
   prompt: 'Change the sky to golden hour',
   image: './photo.jpg',
-  mask: './mask.png'
-});
-
-// Remix image
-const remixResponse = await api.remix({
-  prompt: 'Transform into watercolor painting',
-  image: './photo.jpg',
-  imageWeight: 75
+  mask: './mask.png',
+  renderingSpeed: 'QUALITY'
 });
 
 // Upscale image
 const upscaleResponse = await api.upscale({
   image: './low_res.jpg',
   resemblance: 85,
-  detail: 90
+  detail: 90,
+  prompt: 'Enhance details and sharpness'
 });
+
+// Describe image
+const describeResponse = await api.describe({
+  image: './photo.jpg',
+  describeModelVersion: 'V_3'
+});
+
+const descriptions = extractDescriptions(describeResponse);
+console.log(descriptions);
 ```
 
-## API Operations
+## CLI Usage
 
-### Generate (Text-to-Image)
+### Basic Command Structure
 
-Generate images from text prompts with extensive customization options.
-
-**CLI:**
 ```bash
-ideogram generate \
-  --prompt "Futuristic cityscape at night" \
-  --aspect-ratio "16:9" \
-  --rendering-speed QUALITY \
-  --num-images 2 \
-  --style-preset DRAMATIC_CINEMA
+ideogram <operation> [options]
 ```
 
-**Programmatic:**
-```javascript
-const response = await api.generate({
-  prompt: 'Futuristic cityscape at night',
-  aspectRatio: '16:9',
-  renderingSpeed: 'QUALITY',
-  numImages: 2,
-  stylePreset: 'DRAMATIC_CINEMA',
-  seed: 12345
-});
+### Available Operations
+
+- `generate` - Text-to-image generation
+- `edit` - Image editing with mask
+- `remix` - Image-to-image transformation
+- `reframe` - Aspect ratio change (square images only)
+- `replace-background` - Background replacement
+- `upscale` - Image upscaling
+- `describe` - Image description
+
+### Common Options
+
+```bash
+--prompt <text>              Generation/editing prompt (max 10,000 chars)
+--image <path>               Input image file path
+--aspect-ratio <ratio>       Output aspect ratio (e.g., "16x9", "1x1")
+--resolution <WxH>           Specific resolution (e.g., "1024x1024")
+--rendering-speed <speed>    FLASH | TURBO | DEFAULT | QUALITY
+--num-images <number>        Number of images to generate (1-8, upscale max 4)
+--seed <number>              Random seed for reproducibility
+--style-preset <preset>      One of 62 style presets
+--negative-prompt <text>     Things to avoid in generation
+--api-key <key>              API key (overrides environment)
 ```
+
+### Generate-Specific Options
+
+```bash
+--magic-prompt <mode>        AUTO | ON | OFF (default: AUTO)
+--style-type <type>          AUTO | GENERAL | REALISTIC | DESIGN | FICTION
+--color-palette <palette>    Preset or custom palette
+```
+
+### Edit-Specific Options
+
+```bash
+--mask <path>                Mask image file path (required)
+```
+
+### Remix-Specific Options
+
+```bash
+--image-weight <0-100>       Influence of original image (default: 50)
+```
+
+### Upscale-Specific Options
+
+```bash
+--resemblance <0-100>        Similarity to original (default: 80)
+--detail <0-100>             Detail level (default: 80)
+```
+
+### Describe-Specific Options
+
+```bash
+--describe-model-version     V_2 | V_3 (default: V_3)
+```
+
+### Utility Commands
+
+```bash
+ideogram --help              Show help message
+ideogram --examples          Show usage examples
+ideogram list-style-presets  List all 62 style presets
+ideogram list-aspect-ratios  List all 15 aspect ratios
+ideogram list-resolutions    List all 69 resolutions
+```
+
+## API Methods
+
+### Core Operation Methods
+
+#### `async generate(params)`
+
+Generate images from text prompts.
 
 **Parameters:**
-- `prompt` (required): Generation prompt (max 10,000 chars)
-- `resolution`: Specific resolution (e.g., '1024x1024')
-- `aspectRatio`: Aspect ratio (e.g., '1:1', '16:9', '4:3')
-- `renderingSpeed`: FLASH, TURBO, DEFAULT, or QUALITY
-- `magicPrompt`: AUTO, ON, or OFF
-- `negativePrompt`: Things to avoid in generation
-- `numImages`: Number of images (1-8)
-- `seed`: Random seed for reproducibility
-- `styleType`: AUTO, GENERAL, REALISTIC, DESIGN, FICTION
-- `stylePreset`: One of 52 style presets (see below)
-- `colorPalette`: Preset name or custom palette
+- `prompt` (string, required): Generation prompt (max 10,000 chars)
+- `resolution` (string): Specific resolution (e.g., '1024x1024')
+- `aspectRatio` (string): Aspect ratio (e.g., '16x9')
+- `renderingSpeed` (string): FLASH, TURBO, DEFAULT, or QUALITY
+- `magicPrompt` (string): AUTO, ON, or OFF
+- `negativePrompt` (string): Things to avoid
+- `numImages` (number): Number of images (1-8)
+- `seed` (number): Random seed
+- `styleType` (string): AUTO, GENERAL, REALISTIC, DESIGN, FICTION
+- `stylePreset` (string): One of 62 style presets
+- `colorPalette` (object): Color palette configuration
 
-### Edit (Image Editing with Mask)
+**Returns:** Response object with image data
+
+#### `async edit(params)`
 
 Edit images using masks with natural language prompts.
 
-**CLI:**
-```bash
-ideogram edit \
-  --prompt "Change the sky to golden hour" \
-  --image ./photo.jpg \
-  --mask ./mask.png \
-  --rendering-speed QUALITY
-```
-
-**Programmatic:**
-```javascript
-const response = await api.edit({
-  prompt: 'Change the sky to golden hour',
-  image: './photo.jpg',
-  mask: './mask.png',
-  renderingSpeed: 'QUALITY',
-  stylePreset: 'GOLDEN_HOUR'
-});
-```
-
 **Parameters:**
-- `prompt` (required): Editing prompt
-- `image` (required): Path to image or Buffer
-- `mask` (required): Path to mask or Buffer
-- `magicPrompt`: AUTO, ON, or OFF
-- `numImages`: Number of variants (1-8)
-- `seed`: Random seed
-- `renderingSpeed`: Rendering speed
+- `prompt` (string, required): Editing prompt
+- `image` (string|Buffer, required): Image file path or Buffer
+- `mask` (string|Buffer, required): Mask file path or Buffer
+- `magicPrompt` (string): AUTO, ON, or OFF
+- `numImages` (number): Number of variants (1-8)
+- `seed` (number): Random seed
+- `renderingSpeed` (string): Rendering speed
 - `styleType`, `stylePreset`: Style controls
 
-### Remix (Image-to-Image)
+**Returns:** Response object with edited images
 
-Transform images with prompts while preserving certain characteristics.
+#### `async remix(params)`
 
-**CLI:**
-```bash
-ideogram remix \
-  --prompt "Transform into watercolor painting" \
-  --image ./photo.jpg \
-  --image-weight 75 \
-  --aspect-ratio "1:1"
-```
-
-**Programmatic:**
-```javascript
-const response = await api.remix({
-  prompt: 'Transform into watercolor painting',
-  image: './photo.jpg',
-  imageWeight: 75,
-  aspectRatio: '1:1'
-});
-```
+Transform images while preserving characteristics.
 
 **Parameters:**
-- `prompt` (required): Transformation prompt
-- `image` (required): Path to image or Buffer
-- `imageWeight`: Influence of original (0-100)
+- `prompt` (string, required): Transformation prompt
+- `image` (string|Buffer, required): Image file path or Buffer
+- `imageWeight` (number): Influence of original (0-100)
 - `resolution`, `aspectRatio`: Output dimensions
 - `renderingSpeed`, `magicPrompt`: Generation controls
 - `negativePrompt`, `numImages`, `seed`: Additional options
 - `styleType`, `stylePreset`, `colorPalette`: Style controls
 
-### Reframe (Aspect Ratio Change)
+**Returns:** Response object with remixed images
+
+#### `async reframe(params)`
 
 Reframe square images to different resolutions.
 
-**CLI:**
-```bash
-ideogram reframe \
-  --image ./square_photo.jpg \
-  --resolution "1536x640" \
-  --style-preset DRAMATIC_CINEMA
+**Parameters:**
+- `image` (string|Buffer, required): Square image path or Buffer
+- `resolution` (string, required): Target resolution
+- `numImages` (number): Number of variants (1-8)
+- `seed` (number): Random seed
+- `renderingSpeed` (string): Rendering speed
+- `stylePreset` (string): Style preset
+
+**Returns:** Response object with reframed images
+
+#### `async replaceBackground(params)`
+
+Replace image backgrounds.
+
+**Parameters:**
+- `prompt` (string, required): Background description
+- `image` (string|Buffer, required): Image file path or Buffer
+- `magicPrompt` (string): AUTO, ON, or OFF
+- `numImages` (number): Number of variants (1-8)
+- `seed` (number): Random seed
+- `renderingSpeed` (string): Rendering speed
+- `stylePreset` (string): Style preset
+
+**Returns:** Response object with modified images
+
+#### `async upscale(params)`
+
+High-quality image upscaling.
+
+**Parameters:**
+- `image` (string|Buffer, required): Image file path or Buffer
+- `prompt` (string): Optional guidance prompt
+- `resemblance` (number): Similarity to original (0-100)
+- `detail` (number): Detail level (0-100)
+- `magicPromptOption` (string): AUTO, ON, or OFF
+- `numImages` (number): Number of variants (1-4)
+- `seed` (number): Random seed
+
+**Returns:** Response object with upscaled images
+
+#### `async describe(params)`
+
+Get AI-generated image descriptions.
+
+**Parameters:**
+- `image` (string|Buffer, required): Image file path or Buffer
+- `describeModelVersion` (string): V_2 or V_3
+
+**Returns:** Response object with descriptions
+
+### Utility Methods
+
+#### `setLogLevel(level)`
+
+Change the logging level.
+
+**Parameters:**
+- `level` (string): 'debug', 'info', 'warn', 'error'
+
+### Helper Functions
+
+```javascript
+import { extractImages, extractDescriptions } from 'ideogram-api';
+
+// Extract image data from response
+const images = extractImages(response);
+// Returns: [{ url: '...', resolution: '1024x1024', seed: 12345, isImageSafe: true }, ...]
+
+// Extract descriptions from describe response
+const descriptions = extractDescriptions(response);
+// Returns: ['A serene mountain landscape...', ...]
 ```
 
-**Programmatic:**
+## Examples
+
+### Example 1: Basic Text-to-Image Generation
+
+```bash
+ideogram generate --prompt "A serene mountain landscape at sunset"
+```
+
 ```javascript
-const response = await api.reframe({
-  image: './square_photo.jpg',
-  resolution: '1536x640',
-  stylePreset: 'DRAMATIC_CINEMA'
+const response = await api.generate({
+  prompt: 'A serene mountain landscape at sunset'
 });
 ```
 
-**Parameters:**
-- `image` (required): Square image path or Buffer
-- `resolution` (required): Target resolution
-- `numImages`: Number of variants (1-8)
-- `seed`: Random seed
-- `renderingSpeed`: Rendering speed
-- `stylePreset`: Style preset
+### Example 2: High-Quality Generation with Style
 
-### Replace Background
-
-Replace image backgrounds while keeping foreground subjects.
-
-**CLI:**
 ```bash
-ideogram replace-background \
-  --prompt "A tropical beach at sunset" \
-  --image ./portrait.jpg \
+ideogram generate \
+  --prompt "Vintage travel poster of Tokyo with Mount Fuji" \
+  --style-preset TRAVEL_POSTER \
+  --rendering-speed QUALITY \
+  --aspect-ratio "16x9" \
   --num-images 2
 ```
 
-**Programmatic:**
 ```javascript
-const response = await api.replaceBackground({
-  prompt: 'A tropical beach at sunset',
-  image: './portrait.jpg',
+const response = await api.generate({
+  prompt: 'Vintage travel poster of Tokyo with Mount Fuji',
+  stylePreset: 'TRAVEL_POSTER',
+  renderingSpeed: 'QUALITY',
+  aspectRatio: '16x9',
   numImages: 2
 });
 ```
 
-**Parameters:**
-- `prompt` (required): Background description
-- `image` (required): Path to image or Buffer
-- `magicPrompt`: AUTO, ON, or OFF
-- `numImages`: Number of variants (1-8)
-- `seed`: Random seed
-- `renderingSpeed`: Rendering speed
-- `stylePreset`: Style preset
+### Example 3: Image Editing with Mask
 
-### Upscale
+```bash
+ideogram edit \
+  --prompt "Change the sky to golden hour sunset" \
+  --image ./landscape.jpg \
+  --mask ./sky_mask.png \
+  --style-preset GOLDEN_HOUR
+```
 
-High-quality image upscaling with optional prompt guidance.
+```javascript
+const response = await api.edit({
+  prompt: 'Change the sky to golden hour sunset',
+  image: './landscape.jpg',
+  mask: './sky_mask.png',
+  stylePreset: 'GOLDEN_HOUR'
+});
+```
 
-**CLI:**
+### Example 4: Batch Generation with Different Prompts
+
+```bash
+ideogram generate \
+  --prompt "A red sports car" \
+  --prompt "A blue sedan" \
+  --prompt "A green SUV" \
+  --aspect-ratio "16x9" \
+  --style-preset DRAMATIC_CINEMA
+```
+
+```javascript
+const prompts = [
+  'A red sports car',
+  'A blue sedan',
+  'A green SUV'
+];
+
+for (const prompt of prompts) {
+  const response = await api.generate({
+    prompt,
+    aspectRatio: '16x9',
+    stylePreset: 'DRAMATIC_CINEMA'
+  });
+  console.log(`Generated: ${prompt}`);
+}
+```
+
+### Example 5: Style Transfer with Remix
+
+```bash
+ideogram remix \
+  --prompt "Transform into watercolor painting" \
+  --image ./photo.jpg \
+  --image-weight 75 \
+  --style-preset WATERCOLOR
+```
+
+```javascript
+const response = await api.remix({
+  prompt: 'Transform into watercolor painting',
+  image: './photo.jpg',
+  imageWeight: 75,
+  stylePreset: 'WATERCOLOR'
+});
+```
+
+### Example 6: Image Upscaling with Enhancement
+
 ```bash
 ideogram upscale \
   --image ./low_res.jpg \
-  --resemblance 85 \
-  --detail 90 \
-  --prompt "Enhance details"
+  --resemblance 90 \
+  --detail 85 \
+  --prompt "Enhance facial details and sharpness" \
+  --num-images 2
 ```
 
-**Programmatic:**
 ```javascript
 const response = await api.upscale({
   image: './low_res.jpg',
-  resemblance: 85,
-  detail: 90,
-  prompt: 'Enhance details',
+  resemblance: 90,
+  detail: 85,
+  prompt: 'Enhance facial details and sharpness',
   numImages: 2
 });
 ```
 
-**Parameters:**
-- `image` (required): Path to image or Buffer
-- `prompt`: Optional guidance prompt
-- `resemblance`: Similarity to original (0-100)
-- `detail`: Detail level (0-100)
-- `magicPromptOption`: AUTO, ON, or OFF
-- `numImages`: Number of variants (1-4)
-- `seed`: Random seed
+### Example 7: Background Replacement
 
-### Describe
-
-Get AI-generated descriptions of images.
-
-**CLI:**
 ```bash
-ideogram describe \
-  --image ./photo.jpg \
-  --describe-model-version V_3
+ideogram replace-background \
+  --prompt "Tropical beach at golden hour with palm trees" \
+  --image ./portrait.jpg \
+  --num-images 3
 ```
 
-**Programmatic:**
 ```javascript
-const response = await api.describe({
-  image: './photo.jpg',
-  describeModelVersion: 'V_3'
+const response = await api.replaceBackground({
+  prompt: 'Tropical beach at golden hour with palm trees',
+  image: './portrait.jpg',
+  numImages: 3
+});
+```
+
+### Example 8: Complete Workflow in Code
+
+```javascript
+import { IdeogramAPI, extractImages, extractDescriptions } from 'ideogram-api';
+import fs from 'fs';
+
+const api = new IdeogramAPI(process.env.IDEOGRAM_API_KEY);
+
+// 1. Generate base image
+console.log('Generating base image...');
+const genResponse = await api.generate({
+  prompt: 'Portrait of a mountain climber at summit',
+  aspectRatio: '1x1',
+  renderingSpeed: 'QUALITY',
+  stylePreset: 'DRAMATIC_CINEMA'
 });
 
-const descriptions = extractDescriptions(response);
-console.log(descriptions);
+const genImages = extractImages(genResponse);
+console.log(`Generated ${genImages.length} images`);
+
+// 2. Upscale the first image
+console.log('Upscaling image...');
+const upscaleResponse = await api.upscale({
+  image: Buffer.from(await fetch(genImages[0].url).then(r => r.arrayBuffer())),
+  resemblance: 90,
+  detail: 85
+});
+
+// 3. Describe the upscaled image
+console.log('Getting description...');
+const upscaledImages = extractImages(upscaleResponse);
+const describeResponse = await api.describe({
+  image: Buffer.from(await fetch(upscaledImages[0].url).then(r => r.arrayBuffer()))
+});
+
+const descriptions = extractDescriptions(describeResponse);
+console.log('Description:', descriptions[0]);
 ```
 
-**Parameters:**
-- `image` (required): Path to image or Buffer
-- `describeModelVersion`: V_2 or V_3
+## Data Organization
+
+Generated images and metadata are organized by operation:
+
+```
+datasets/ideogram/
+├── generate-v3/
+│   ├── 20250120_143022_serene-mountain-landscape.png
+│   ├── 20250120_143022_serene-mountain-landscape.json
+│   └── ...
+├── edit-v3/
+│   ├── 20250120_143530_golden-sky-edit.png
+│   ├── 20250120_143530_golden-sky-edit.json
+│   └── ...
+├── remix-v3/
+│   └── ...
+├── reframe-v3/
+│   └── ...
+├── replace-background-v3/
+│   └── ...
+├── upscale/
+│   └── ...
+└── describe/
+    └── 20250120_144000_description.json
+```
+
+**Metadata Format:**
+
+Each generated image has an accompanying JSON metadata file:
+
+```json
+{
+  "operation": "generate-v3",
+  "timestamp": "2025-01-20T14:30:22.815812+00:00",
+  "parameters": {
+    "prompt": ["A serene mountain landscape at sunset"],
+    "renderingSpeed": "QUALITY",
+    "magicPrompt": "ON",
+    "numImages": "2",
+    "aspectRatio": "16x9",
+    "stylePreset": "DRAMATIC_CINEMA",
+    "seed": "12345"
+  },
+  "response": {
+    "imageCount": 2,
+    "images": [
+      {
+        "index": 1,
+        "url": "https://ideogram.ai/api/images/ephemeral/...",
+        "resolution": "1312x736",
+        "seed": 12345,
+        "isImageSafe": true
+      }
+    ]
+  }
+}
+```
+
+## Security Features
+
+This library includes comprehensive production-ready security:
+
+### API Key Protection
+
+API keys are automatically redacted in all logs:
+
+```javascript
+// Logged as: "API key: xxx...abc1234" (shows only last 7 chars)
+api.setLogLevel('debug');
+```
+
+Keys are never logged in full, even in DEBUG mode.
+
+### Error Message Sanitization
+
+In production mode (`NODE_ENV=production`), detailed error messages are replaced with generic ones to prevent information disclosure:
+
+```javascript
+// Development: "Error: Invalid aspect ratio '16:10'. Must be one of: ..."
+// Production: "An error occurred during the request."
+```
+
+### SSRF Protection (Server-Side Request Forgery)
+
+All image URLs are validated before processing to prevent attacks:
+
+- **Localhost blocking**: `127.0.0.1`, `::1`, `localhost`
+- **Private IP ranges**: `10.x`, `192.168.x`, `172.16-31.x`, `169.254.x`
+- **Cloud metadata endpoints**: `169.254.169.254`, `metadata.google.internal`
+- **IPv4-Mapped IPv6 bypass prevention**: Detects `[::ffff:127.0.0.1]` attempts
+- **DNS rebinding prevention**: Resolves domains and blocks those pointing to internal IPs
+
+### Image File Validation
+
+- **Magic byte checking**: Validates PNG, JPEG, WebP, GIF by file signature (not just extension)
+- **File size limits**: 50MB maximum for downloads
+- **Format validation**: Ensures proper file structure
+
+### HTTPS Enforcement
+
+The constructor rejects HTTP URLs:
+
+```javascript
+// This will throw an error
+const api = new IdeogramAPI('key', 'http://insecure-api.com');
+```
+
+### Request Timeout & Size Protection
+
+- **API request timeout**: 120 seconds
+- **Image download timeout**: 60 seconds
+- **File size limit**: 50MB maximum
+- **Redirect limit**: Maximum 5 redirects
+
+### Parameter Validation
+
+All parameters are validated before making API calls using `validateOperationParams()`:
+
+- Catches invalid parameters early
+- Saves API credits by preventing failed requests
+- Provides clear error messages
+
+## Error Handling
+
+The service includes comprehensive error handling with clear messages:
+
+### Synchronous Responses
+
+Unlike many APIs, Ideogram returns results immediately - no polling required! This makes error handling simpler:
+
+```javascript
+try {
+  const response = await api.generate({ prompt: 'landscape' });
+  // Response is ready immediately
+  console.log('Success:', response);
+} catch (error) {
+  console.error('Error:', error.message);
+}
+```
+
+### Common HTTP Status Codes
+
+- **400 Bad Request**: Invalid parameters
+- **401 Unauthorized**: Invalid API key
+- **422 Unprocessable Entity**: Parameter validation failed
+- **429 Too Many Requests**: Rate limit exceeded
+- **500 Internal Server Error**: API server error
+
+### Error Messages
+
+Clear, actionable error messages:
+
+```javascript
+// Invalid parameter
+"Invalid aspect ratio '16:10'. Must be one of: 1x1, 16x9, ..."
+
+// Missing API key
+"IDEOGRAM_API_KEY not found. Please provide your API key via..."
+
+// File validation
+"Image file must be PNG, JPEG, WebP, or GIF format"
+
+// Security
+"SECURITY: Blocked access to private/internal IP: 127.0.0.1"
+```
+
+## Troubleshooting
+
+### API Key Not Found
+
+```
+Error: IDEOGRAM_API_KEY not found. Please provide your API key via one of these methods...
+```
+
+**Solution:** Configure your API key using one of the methods in [Authentication Setup](#authentication-setup):
+
+```bash
+export IDEOGRAM_API_KEY=your_api_key
+```
+
+Or create a `.env` file:
+
+```bash
+echo "IDEOGRAM_API_KEY=your_api_key" > .env
+```
+
+### Invalid Aspect Ratio
+
+```
+Error: Invalid aspect ratio '16:10'. Must be one of: 1x1, 10x16, 16x10, ...
+```
+
+**Solution:** Use one of the 15 supported aspect ratios:
+
+```bash
+ideogram list-aspect-ratios
+```
+
+Or use `--resolution` for precise control:
+
+```bash
+ideogram generate --prompt "landscape" --resolution "1920x1080"
+```
+
+### Invalid Style Preset
+
+```
+Error: Invalid style preset 'CINEMATIC'. Must be one of: 80S_ILLUSTRATION, ...
+```
+
+**Solution:** Use the helper command to see all 62 valid presets:
+
+```bash
+ideogram list-style-presets
+```
+
+**Note:** Some presets like CINEMATIC, SURREALISM, FANTASY_ART are not valid.
+
+### Reframe Requires Square Images
+
+```
+Error: Reframe operation requires perfectly square input images. Image dimensions: 1920x1080
+```
+
+**Solution:** The reframe operation only accepts square images. Crop or resize your image to square dimensions first:
+
+```bash
+# Valid
+ideogram reframe --image square_1024x1024.jpg --resolution "1536x640"
+
+# Invalid - not square
+ideogram reframe --image landscape_1920x1080.jpg --resolution "1536x640"
+```
+
+### File Too Large
+
+```
+Error: File size exceeds maximum allowed size of 50MB
+```
+
+**Solution:** Reduce your image file size before uploading. Use compression or resize the image.
+
+### Rate Limit Exceeded
+
+```
+Error: Request failed with status code 429
+```
+
+**Solution:**
+- Wait before making additional requests
+- Check your account limits at https://ideogram.ai/api
+- Consider upgrading your plan for higher limits
+
+### Module Not Found
+
+```
+Error: Cannot find module 'axios'
+```
+
+**Solution:** Reinstall dependencies:
+
+```bash
+npm install
+```
 
 ## CLI Helper Commands
 
@@ -365,7 +1037,7 @@ Resolutions are grouped by:
 
 ## Style Presets
 
-62 available style presets:
+62 available style presets (use `ideogram list-style-presets` for formatted display):
 
 ```
 80S_ILLUSTRATION, 90S_NOSTALGIA, ABSTRACT_ORGANIC, ANALOG_NOSTALGIA,
@@ -385,42 +1057,20 @@ VINTAGE_POSTER, WATERCOLOR, WEIRD, WOODBLOCK_PRINT
 
 **Note:** Some style presets like CINEMATIC, SURREALISM, and FANTASY_ART are not valid despite appearing in some documentation. Use the `list-style-presets` command to see the authoritative list.
 
-## Authentication
-
-API key priority (highest to lowest):
-
-1. **CLI flag**: `--api-key YOUR_KEY`
-2. **Environment variable**: `IDEOGRAM_API_KEY`
-3. **Local .env file**: `IDEOGRAM_API_KEY=YOUR_KEY`
-4. **Global config**: `~/.ideogram/.env`
-
-Get your API key at: https://ideogram.ai/api
-
 ## Batch Processing
 
 Process multiple prompts in a single CLI call:
 
 ```bash
 ideogram generate \
-  --prompt "red apple" \
-  --prompt "green apple" \
-  --prompt "yellow apple" \
-  --aspect-ratio "1:1"
+  --prompt "red sports car" \
+  --prompt "blue sedan" \
+  --prompt "green SUV" \
+  --aspect-ratio "16x9" \
+  --style-preset DRAMATIC_CINEMA
 ```
 
-## Security Features
-
-This library includes comprehensive production-ready security:
-
-- **HTTPS Enforcement**: Only HTTPS URLs allowed
-- **API Key Redaction**: Keys never logged in full
-- **SSRF Protection**: Blocks private IPs and metadata endpoints
-- **IPv4-Mapped IPv6 Prevention**: Prevents bypass attempts
-- **DNS Rebinding Prevention**: Blocks domains resolving to internal IPs (prevents TOCTOU attacks)
-- **File Validation**: Magic byte checking for images
-- **Size Limits**: 50MB max for uploads/downloads
-- **DoS Prevention**: Timeouts and redirect limits
-- **Error Sanitization**: Generic errors in production
+Images are generated sequentially with organized output.
 
 ## Configuration
 
@@ -435,32 +1085,13 @@ IDEOGRAM_OUTPUT_DIR=./custom-output  # Default: datasets/ideogram
 NODE_ENV=production                   # Enables error sanitization
 ```
 
-## Output Structure
-
-Generated files are organized by operation:
-
-```
-datasets/ideogram/
-├── generate-v3/
-│   ├── 20250119_143022_serene-landscape.png
-│   └── 20250119_143022_serene-landscape.json
-├── edit-v3/
-├── remix-v3/
-├── reframe-v3/
-├── replace-background-v3/
-├── upscale/
-└── describe/
-```
-
-Each image has an accompanying JSON metadata file.
-
 ## Testing
 
 ```bash
-# Run tests
+# Run all tests
 npm test
 
-# Watch mode
+# Watch mode for development
 npm run test:watch
 
 # Coverage report
@@ -470,69 +1101,75 @@ npm run test:coverage
 npm run test:ui
 ```
 
-## Examples
+**Test Coverage:** 203 tests covering all operations, security features, and utilities.
 
-See all CLI examples:
+## Development Scripts
 
-```bash
-ideogram --examples
-```
-
-## NPM Scripts
-
-Convenient npm scripts for common operations:
+### For Source Development
 
 ```bash
-# Help and examples
-npm run ideogram:help               # Show help menu
-npm run ideogram:examples           # Show usage examples
+# Run CLI from source
+npm run ideogram
+
+# Show help
+npm run ideogram:help
+
+# Show examples
+npm run ideogram:examples
 
 # Helper commands
-npm run ideogram:list-styles        # List all 62 style presets
-npm run ideogram:list-ratios        # List all 15 aspect ratios
-npm run ideogram:list-resolutions   # List all 69 resolutions
+npm run ideogram:list-styles
+npm run ideogram:list-ratios
+npm run ideogram:list-resolutions
 
-# Operation shortcuts
-npm run ideogram:generate           # Quick generate command
-npm run ideogram:edit               # Quick edit command
-npm run ideogram:remix              # Quick remix command
-npm run ideogram:reframe            # Quick reframe command
-npm run ideogram:replace-background # Quick background replace command
-npm run ideogram:upscale            # Quick upscale command
-npm run ideogram:describe           # Quick describe command
+# Operations
+npm run ideogram:generate
+npm run ideogram:edit
+npm run ideogram:remix
+npm run ideogram:reframe
+npm run ideogram:replace-background
+npm run ideogram:upscale
+npm run ideogram:describe
 ```
 
-## API Reference
+### Testing Commands
 
-### Class: IdeogramAPI
-
-```javascript
-constructor(apiKey, baseUrl = 'https://api.ideogram.ai', logLevel = 'info')
+```bash
+npm test              # Run tests once
+npm run test:watch    # Run tests in watch mode
+npm run test:ui       # Open Vitest UI
+npm run test:coverage # Generate coverage report
 ```
 
-**Methods:**
-- `async generate(params)` - Generate images
-- `async edit(params)` - Edit with mask
-- `async remix(params)` - Remix images
-- `async reframe(params)` - Reframe images
-- `async replaceBackground(params)` - Replace backgrounds
-- `async upscale(params)` - Upscale images
-- `async describe(params)` - Describe images
-- `setLogLevel(level)` - Change log level
+## Rate Limits
 
-### Helper Functions
+Rate limits depend on your Ideogram API plan. Check your account at [https://ideogram.ai/api](https://ideogram.ai/api) for current limits.
 
-```javascript
-import { extractImages, extractDescriptions } from 'ideogram-api';
-
-const images = extractImages(response);        // Extract image data
-const descriptions = extractDescriptions(response);  // Extract descriptions
-```
+**Recommendations:**
+- Implement retry logic with exponential backoff for 429 errors
+- Monitor your usage in the Ideogram dashboard
+- Consider upgrading if you frequently hit limits
 
 ## Requirements
 
 - Node.js >= 18.0.0
 - Ideogram API key
+
+## Additional Resources
+
+- [Ideogram API Documentation](https://developer.ideogram.ai/api-reference)
+- [Ideogram API Keys](https://ideogram.ai/api)
+- [Issue Tracker](https://github.com/aself101/ideogram-api/issues)
+- [npm Package](https://www.npmjs.com/package/ideogram-api)
+
+## Related Packages
+
+This package is part of the img-gen ecosystem. Check out these other AI generation services:
+
+- [`bfl-api`](https://github.com/aself101/bfl-api) - Black Forest Labs API wrapper for FLUX and Kontext models
+- [`stability-ai-api`](https://github.com/aself101/stability-ai-api) - Stability AI API wrapper for Stable Diffusion 3.5 and image upscaling
+- [`google-genai-api`](https://github.com/aself101/google-genai-api) - Google Generative AI (Imagen) wrapper
+- [`openai-api`](https://github.com/aself101/openai-api) - OpenAI API wrapper for DALL-E and GPT Image generation
 
 ## License
 
@@ -540,13 +1177,18 @@ MIT
 
 ## Contributing
 
-Contributions welcome! Please follow the existing code patterns and include tests.
+Contributions welcome! Please follow the existing code patterns and include tests for new features.
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes with tests
+4. Submit a pull request
 
 ## Support
 
-- Documentation: https://developer.ideogram.ai/api-reference
-- Issues: https://github.com/aself101/ideogram-api/issues
-- API Keys: https://ideogram.ai/api
+- **Documentation**: [https://developer.ideogram.ai/api-reference](https://developer.ideogram.ai/api-reference)
+- **Issues**: [https://github.com/aself101/ideogram-api/issues](https://github.com/aself101/ideogram-api/issues)
+- **API Keys**: [https://ideogram.ai/api](https://ideogram.ai/api)
 
 ## Changelog
 
@@ -557,6 +1199,7 @@ Contributions welcome! Please follow the existing code patterns and include test
 - Fixed --examples flag behavior to display properly
 - Added npm script shortcuts for all helper commands
 - Updated documentation with all 62 style presets
+- Enhanced README with comprehensive examples and troubleshooting
 
 ### v1.0.0
 
@@ -565,8 +1208,10 @@ Contributions welcome! Please follow the existing code patterns and include test
 - Comprehensive CLI with subcommands
 - Production-ready security features
 - Batch processing support
-- Complete test coverage
+- Complete test coverage (203 tests)
 
 ---
+
+**Disclaimer:** This project is an independent community wrapper and is not affiliated with Ideogram.
 
 Built with the [img-gen](https://github.com/aself101/img-gen) data collection architecture.
