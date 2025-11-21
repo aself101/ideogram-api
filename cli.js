@@ -40,6 +40,17 @@ import {
 } from './utils.js';
 import axios from 'axios';
 import path from 'path';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+
+// ES modules __dirname equivalent
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Read version from package.json dynamically
+const { version } = JSON.parse(
+  readFileSync(path.join(__dirname, 'package.json'), 'utf8')
+);
 
 /**
  * Display usage examples.
@@ -225,7 +236,7 @@ const program = new Command();
 program
   .name('ideogram')
   .description('Ideogram API - Image generation and manipulation')
-  .version('1.0.0')
+  .version(version)
   .option('--api-key <key>', 'Ideogram API key')
   .option('-o, --output-dir <path>', 'Output directory', DEFAULT_OUTPUT_DIR)
   .option('--log-level <level>', 'Logging level (debug, info, warn, error)', 'info')
