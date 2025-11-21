@@ -315,7 +315,7 @@ export async function downloadImageAsBuffer(imageUrl) {
  * @example
  * const formData = buildFormData({
  *   prompt: 'a cat',
- *   aspect_ratio: '1:1',
+ *   aspect_ratio: '1x1',
  *   num_images: 1
  * });
  */

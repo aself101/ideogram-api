@@ -179,7 +179,7 @@ export class IdeogramAPI {
    * @param {Object} params - Generation parameters
    * @param {string} params.prompt - Generation prompt (required, max 10,000 chars)
    * @param {string} [params.resolution] - Image resolution (e.g., '1024x1024')
-   * @param {string} [params.aspectRatio] - Aspect ratio (e.g., '1:1', '16:9')
+   * @param {string} [params.aspectRatio] - Aspect ratio (e.g., '1x1', '16x9')
    * @param {string} [params.renderingSpeed='DEFAULT'] - Rendering speed (FLASH, TURBO, DEFAULT, QUALITY)
    * @param {string} [params.magicPrompt='AUTO'] - Magic prompt option (AUTO, ON, OFF)
    * @param {string} [params.negativePrompt] - Negative prompt

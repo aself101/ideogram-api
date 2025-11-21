@@ -237,7 +237,7 @@ program
   .description('Generate images with Ideogram 3.0')
   .option('-p, --prompt <text...>', 'Generation prompt(s) (required)')
   .option('-r, --resolution <size>', 'Image resolution (e.g., 1024x1024)')
-  .option('-a, --aspect-ratio <ratio>', 'Aspect ratio (e.g., 1:1, 16:9)')
+  .option('-a, --aspect-ratio <ratio>', 'Aspect ratio (e.g., 1x1, 16x9)')
   .option('--rendering-speed <speed>', `Rendering speed (${RENDERING_SPEEDS.join(', ')})`, 'DEFAULT')
   .option('--magic-prompt <option>', 'Magic prompt (AUTO, ON, OFF)', 'AUTO')
   .option('--negative-prompt <text>', 'Negative prompt')

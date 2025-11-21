@@ -234,7 +234,7 @@ export function redactApiKey(apiKey) {
  * @throws {Error} If validation fails
  *
  * @example
- * validateOperationParams('generate-v3', { prompt: 'a cat', aspectRatio: '1:1' });
+ * validateOperationParams('generate-v3', { prompt: 'a cat', aspectRatio: '1x1' });
  * validateOperationParams('upscale', { image: './photo.jpg', resemblance: 55 });
  */
 export function validateOperationParams(operation, params) {
