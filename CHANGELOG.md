@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/aself101/ideogram-api/compare/v1.0.0...v1.0.1) (2025-11-21)
+
+
+### Bug Fixes
+
+* **cli:** use dynamic version from package.json to prevent drift ([129272c](https://github.com/aself101/ideogram-api/commit/129272c62c067bbc051135efdb392e261d9458e4))
+
 # 1.0.0 (2025-11-20)
 
 
