@@ -489,7 +489,7 @@ export class IdeogramAPI {
     };
 
     const formData = buildFormData({
-      image: imageBuffer,
+      image_file: imageBuffer,
       image_request: imageRequest
     });
 
@@ -525,7 +525,7 @@ export class IdeogramAPI {
       : await loadImageAsBuffer(params.image);
 
     const formData = buildFormData({
-      image: imageBuffer,
+      image_file: imageBuffer,
       describe_model_version: params.describeModelVersion
     });
 
