@@ -1,3 +1,10 @@
+## [1.0.3](https://github.com/aself101/ideogram-api/compare/v1.0.2...v1.0.3) (2025-11-23)
+
+
+### Bug Fixes
+
+* **api:** use 'image_file' for upscale and describe endpoints ([0ea4646](https://github.com/aself101/ideogram-api/commit/0ea4646f151595446af586dde77a432572d84541))
+
 ## [1.0.2](https://github.com/aself101/ideogram-api/compare/v1.0.1...v1.0.2) (2025-11-23)
 
 

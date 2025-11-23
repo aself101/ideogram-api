@@ -1,6 +1,6 @@
 {
   "name": "ideogram-api",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Node.js wrapper for Ideogram API - Image generation, editing, remixing, and manipulation",
   "type": "module",
   "main": "api.js",
