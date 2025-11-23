@@ -266,7 +266,7 @@ export class IdeogramAPI {
 
     const formData = buildFormData({
       prompt: params.prompt,
-      image_file: imageBuffer,
+      image: imageBuffer,
       mask: maskBuffer,
       magic_prompt: params.magicPrompt || 'AUTO',
       num_images: params.numImages || 1,
@@ -325,7 +325,7 @@ export class IdeogramAPI {
 
     const formData = buildFormData({
       prompt: params.prompt,
-      image_file: imageBuffer,
+      image: imageBuffer,
       image_weight: params.imageWeight,
       seed: params.seed,
       resolution: params.resolution,
@@ -380,7 +380,7 @@ export class IdeogramAPI {
       : await loadImageAsBuffer(params.image);
 
     const formData = buildFormData({
-      image_file: imageBuffer,
+      image: imageBuffer,
       resolution: params.resolution,
       num_images: params.numImages || 1,
       seed: params.seed,
@@ -431,7 +431,7 @@ export class IdeogramAPI {
 
     const formData = buildFormData({
       prompt: params.prompt,
-      image_file: imageBuffer,
+      image: imageBuffer,
       magic_prompt: params.magicPrompt || 'AUTO',
       num_images: params.numImages || 1,
       seed: params.seed,
@@ -489,7 +489,7 @@ export class IdeogramAPI {
     };
 
     const formData = buildFormData({
-      image_file: imageBuffer,
+      image: imageBuffer,
       image_request: imageRequest
     });
 
@@ -525,7 +525,7 @@ export class IdeogramAPI {
       : await loadImageAsBuffer(params.image);
 
     const formData = buildFormData({
-      image_file: imageBuffer,
+      image: imageBuffer,
       describe_model_version: params.describeModelVersion
     });
 
