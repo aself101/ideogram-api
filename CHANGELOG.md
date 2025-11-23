@@ -1,3 +1,10 @@
+## [1.0.2](https://github.com/aself101/ideogram-api/compare/v1.0.1...v1.0.2) (2025-11-23)
+
+
+### Bug Fixes
+
+* **api:** use correct 'image' field name for multipart form data ([1897b42](https://github.com/aself101/ideogram-api/commit/1897b4269e808e6e8385da5b385a355bb0ef17e5))
+
 ## [1.0.1](https://github.com/aself101/ideogram-api/compare/v1.0.0...v1.0.1) (2025-11-21)
 
 
