@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/aself101/ideogram-api/compare/v1.0.3...v1.1.0) (2025-12-03)
+
+
+### Features
+
+* **typescript:** migrate codebase to TypeScript with full type definitions ([cceb808](https://github.com/aself101/ideogram-api/commit/cceb80821189c4edad07e46285209cc22faa81e9))
+
 ## [1.0.3](https://github.com/aself101/ideogram-api/compare/v1.0.2...v1.0.3) (2025-11-23)
 
 
