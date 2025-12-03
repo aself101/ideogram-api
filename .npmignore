@@ -1,21 +1,24 @@
+# Source files (TypeScript - only publish compiled dist/)
+src/
+
 # Test files
 test/
 *.test.js
 coverage/
 .nyc_output/
 
-
+# Config files
 tsconfig.json
 jest.config.js
 .releaserc.json
 .eslintrc.js
 .prettierrc
+vitest.config.js
 
 # Development files
 .env
 .env.*
 .env.example
-vitest.config.js
 
 # Output directories
 datasets/
@@ -42,14 +45,8 @@ Thumbs.db
 .gitignore
 .github/
 
-# IDE
-.vscode/
-
 # Documentation (keep README.md, LICENSE, CHANGELOG.md)
 docs/
 
 # Build artifacts
 node_modules/
-
-# release
-.releaserc.json
