@@ -21,8 +21,8 @@ import {
   saveMetadata,
   ensureDirectory,
   assertSquareImage
-} from '../utils.js';
-import { redactApiKey } from '../config.js';
+} from '../src/utils.js';
+import { redactApiKey } from '../src/config.js';
 import { writeFileSync, unlinkSync, mkdirSync, rmdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import FormData from 'form-data';

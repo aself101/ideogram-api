@@ -4,6 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js Version](https://img.shields.io/node/v/ideogram-api)](https://nodejs.org)
 [![Tests](https://img.shields.io/badge/tests-203%20passing-brightgreen)](test/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg)](https://www.typescriptlang.org/)
 
 A Node.js wrapper for the [Ideogram API](https://ideogram.ai/api) that provides comprehensive access to AI-powered image generation, editing, remixing, and manipulation. Generate, edit, upscale, and transform images with 62 style presets through a simple command-line interface.
 
@@ -27,13 +28,14 @@ ideogram generate --prompt "A serene mountain landscape"
 ```
 
 ### Programmatic Usage
-```javascript
+```typescript
 import { IdeogramAPI } from 'ideogram-api';
+import type { GenerateParams, GenerationResponse } from 'ideogram-api';
 
 const api = new IdeogramAPI('your_api_key');
 
 // Generate image (synchronous - no polling needed!)
-const response = await api.generate({
+const response: GenerationResponse = await api.generate({
   prompt: 'A serene mountain landscape at sunset',
   aspectRatio: '16x9',
   renderingSpeed: 'QUALITY'
@@ -58,6 +60,7 @@ console.log('Generated images:', response.data);
 - [Troubleshooting](#troubleshooting)
 - [CLI Helper Commands](#cli-helper-commands)
 - [Style Presets](#style-presets)
+- [TypeScript Support](#typescript-support)
 
 ## Overview
 
@@ -299,13 +302,14 @@ ideogram describe --image photo.jpg
 
 ### Using the API Class Directly
 
-```javascript
+```typescript
 import { IdeogramAPI, extractImages, extractDescriptions } from 'ideogram-api';
+import type { GenerationResponse, DescribeResponse, ImageData } from 'ideogram-api';
 
 const api = new IdeogramAPI('your_api_key');
 
 // Generate with all options
-const response = await api.generate({
+const response: GenerationResponse = await api.generate({
   prompt: 'A serene mountain landscape at sunset',
   aspectRatio: '16x9',
   renderingSpeed: 'QUALITY',
@@ -315,11 +319,11 @@ const response = await api.generate({
   seed: 12345
 });
 
-const images = extractImages(response);
+const images: ImageData[] = extractImages(response);
 console.log(`Generated ${images.length} images`);
 
 // Edit image
-const editResponse = await api.edit({
+const editResponse: GenerationResponse = await api.edit({
   prompt: 'Change the sky to golden hour',
   image: './photo.jpg',
   mask: './mask.png',
@@ -327,7 +331,7 @@ const editResponse = await api.edit({
 });
 
 // Upscale image
-const upscaleResponse = await api.upscale({
+const upscaleResponse: GenerationResponse = await api.upscale({
   image: './low_res.jpg',
   resemblance: 85,
   detail: 90,
@@ -335,12 +339,12 @@ const upscaleResponse = await api.upscale({
 });
 
 // Describe image
-const describeResponse = await api.describe({
+const describeResponse: DescribeResponse = await api.describe({
   image: './photo.jpg',
   describeModelVersion: 'V_3'
 });
 
-const descriptions = extractDescriptions(describeResponse);
+const descriptions: string[] = extractDescriptions(describeResponse);
 console.log(descriptions);
 ```
 
@@ -539,15 +543,16 @@ Change the logging level.
 
 ### Helper Functions
 
-```javascript
+```typescript
 import { extractImages, extractDescriptions } from 'ideogram-api';
+import type { ImageData, GenerationResponse, DescribeResponse } from 'ideogram-api';
 
 // Extract image data from response
-const images = extractImages(response);
-// Returns: [{ url: '...', resolution: '1024x1024', seed: 12345, isImageSafe: true }, ...]
+const images: ImageData[] = extractImages(response);
+// Returns: [{ url: '...', resolution: '1024x1024', seed: 12345, is_image_safe: true }, ...]
 
 // Extract descriptions from describe response
-const descriptions = extractDescriptions(response);
+const descriptions: string[] = extractDescriptions(describeResponse);
 // Returns: ['A serene mountain landscape...', ...]
 ```
 
@@ -559,7 +564,7 @@ const descriptions = extractDescriptions(response);
 ideogram generate --prompt "A serene mountain landscape at sunset"
 ```
 
-```javascript
+```typescript
 const response = await api.generate({
   prompt: 'A serene mountain landscape at sunset'
 });
@@ -576,7 +581,7 @@ ideogram generate \
   --num-images 2
 ```
 
-```javascript
+```typescript
 const response = await api.generate({
   prompt: 'Vintage travel poster of Tokyo with Mount Fuji',
   stylePreset: 'TRAVEL_POSTER',
@@ -596,7 +601,7 @@ ideogram edit \
   --style-preset GOLDEN_HOUR
 ```
 
-```javascript
+```typescript
 const response = await api.edit({
   prompt: 'Change the sky to golden hour sunset',
   image: './landscape.jpg',
@@ -616,8 +621,8 @@ ideogram generate \
   --style-preset DRAMATIC_CINEMA
 ```
 
-```javascript
-const prompts = [
+```typescript
+const prompts: string[] = [
   'A red sports car',
   'A blue sedan',
   'A green SUV'
@@ -643,7 +648,7 @@ ideogram remix \
   --style-preset WATERCOLOR
 ```
 
-```javascript
+```typescript
 const response = await api.remix({
   prompt: 'Transform into watercolor painting',
   image: './photo.jpg',
@@ -663,7 +668,7 @@ ideogram upscale \
   --num-images 2
 ```
 
-```javascript
+```typescript
 const response = await api.upscale({
   image: './low_res.jpg',
   resemblance: 90,
@@ -682,7 +687,7 @@ ideogram replace-background \
   --num-images 3
 ```
 
-```javascript
+```typescript
 const response = await api.replaceBackground({
   prompt: 'Tropical beach at golden hour with palm trees',
   image: './portrait.jpg',
@@ -692,27 +697,27 @@ const response = await api.replaceBackground({
 
 ### Example 8: Complete Workflow in Code
 
-```javascript
+```typescript
 import { IdeogramAPI, extractImages, extractDescriptions } from 'ideogram-api';
-import fs from 'fs';
+import type { GenerationResponse, DescribeResponse, ImageData } from 'ideogram-api';
 
-const api = new IdeogramAPI(process.env.IDEOGRAM_API_KEY);
+const api = new IdeogramAPI(process.env.IDEOGRAM_API_KEY!);
 
 // 1. Generate base image
 console.log('Generating base image...');
-const genResponse = await api.generate({
+const genResponse: GenerationResponse = await api.generate({
   prompt: 'Portrait of a mountain climber at summit',
   aspectRatio: '1x1',
   renderingSpeed: 'QUALITY',
   stylePreset: 'DRAMATIC_CINEMA'
 });
 
-const genImages = extractImages(genResponse);
+const genImages: ImageData[] = extractImages(genResponse);
 console.log(`Generated ${genImages.length} images`);
 
 // 2. Upscale the first image
 console.log('Upscaling image...');
-const upscaleResponse = await api.upscale({
+const upscaleResponse: GenerationResponse = await api.upscale({
   image: Buffer.from(await fetch(genImages[0].url).then(r => r.arrayBuffer())),
   resemblance: 90,
   detail: 85
@@ -720,12 +725,12 @@ const upscaleResponse = await api.upscale({
 
 // 3. Describe the upscaled image
 console.log('Getting description...');
-const upscaledImages = extractImages(upscaleResponse);
-const describeResponse = await api.describe({
+const upscaledImages: ImageData[] = extractImages(upscaleResponse);
+const describeResponse: DescribeResponse = await api.describe({
   image: Buffer.from(await fetch(upscaledImages[0].url).then(r => r.arrayBuffer()))
 });
 
-const descriptions = extractDescriptions(describeResponse);
+const descriptions: string[] = extractDescriptions(describeResponse);
 console.log('Description:', descriptions[0]);
 ```
 
@@ -859,13 +864,13 @@ The service includes comprehensive error handling with clear messages:
 
 Unlike many APIs, Ideogram returns results immediately - no polling required! This makes error handling simpler:
 
-```javascript
+```typescript
 try {
   const response = await api.generate({ prompt: 'landscape' });
   // Response is ready immediately
   console.log('Success:', response);
 } catch (error) {
-  console.error('Error:', error.message);
+  console.error('Error:', (error as Error).message);
 }
 ```
 
@@ -1057,6 +1062,95 @@ VINTAGE_POSTER, WATERCOLOR, WEIRD, WOODBLOCK_PRINT
 
 **Note:** Some style presets like CINEMATIC, SURREALISM, and FANTASY_ART are not valid despite appearing in some documentation. Use the `list-style-presets` command to see the authoritative list.
 
+## TypeScript Support
+
+This package is written in TypeScript and provides full type definitions out of the box.
+
+### Type Imports
+
+```typescript
+// Import the API class and helper functions
+import { IdeogramAPI, extractImages, extractDescriptions } from 'ideogram-api';
+
+// Import types for type annotations
+import type {
+  // API Options
+  IdeogramApiOptions,
+
+  // Parameter types
+  GenerateParams,
+  EditParams,
+  RemixParams,
+  ReframeParams,
+  ReplaceBackgroundParams,
+  UpscaleParams,
+  DescribeParams,
+
+  // Response types
+  GenerationResponse,
+  DescribeResponse,
+  ImageData,
+  Description,
+
+  // Utility types
+  RenderingSpeed,
+  MagicPromptOption,
+  StyleType,
+  ColorPalette,
+  ColorPalettePreset,
+} from 'ideogram-api';
+```
+
+### Type-Safe Usage Example
+
+```typescript
+import { IdeogramAPI, extractImages } from 'ideogram-api';
+import type { GenerateParams, GenerationResponse, ImageData, RenderingSpeed } from 'ideogram-api';
+
+// Type-safe API initialization
+const api = new IdeogramAPI(process.env.IDEOGRAM_API_KEY!);
+
+// Type-safe parameters
+const params: GenerateParams = {
+  prompt: 'A serene mountain landscape',
+  aspectRatio: '16x9',
+  renderingSpeed: 'QUALITY' as RenderingSpeed,
+  numImages: 2,
+  seed: 12345
+};
+
+// Type-safe response handling
+const response: GenerationResponse = await api.generate(params);
+const images: ImageData[] = extractImages(response);
+
+// Access typed properties
+images.forEach((img: ImageData) => {
+  console.log(`URL: ${img.url}`);
+  console.log(`Resolution: ${img.resolution}`);
+  console.log(`Seed: ${img.seed}`);
+  console.log(`Safe: ${img.is_image_safe}`);
+});
+```
+
+### Available Type Definitions
+
+| Category | Types |
+|----------|-------|
+| **Configuration** | `IdeogramApiOptions` |
+| **Parameters** | `GenerateParams`, `EditParams`, `RemixParams`, `ReframeParams`, `ReplaceBackgroundParams`, `UpscaleParams`, `DescribeParams` |
+| **Responses** | `GenerationResponse`, `DescribeResponse`, `ImageData`, `Description` |
+| **Enums/Unions** | `RenderingSpeed`, `MagicPromptOption`, `StyleType`, `DescribeModelVersion` |
+| **Color Palettes** | `ColorPalette`, `ColorPalettePreset`, `CustomColorPalette` |
+| **Validation** | `ValidationResult`, `ValidationParams`, `OperationConstraint` |
+
+### IDE Support
+
+With TypeScript, you get full IDE support including:
+- **Autocomplete** for all API methods and parameters
+- **Inline documentation** from JSDoc comments
+- **Type checking** to catch errors before runtime
+- **Refactoring support** with accurate symbol references
+
 ## Batch Processing
 
 Process multiple prompts in a single CLI call:
@@ -1191,6 +1285,19 @@ Contributions welcome! Please follow the existing code patterns and include test
 - **API Keys**: [https://ideogram.ai/api](https://ideogram.ai/api)
 
 ## Changelog
+
+### v1.0.3
+
+- **TypeScript Migration**: Complete rewrite in TypeScript with full type definitions
+- Added comprehensive type exports for all parameters and responses
+- Added TypeScript Support section to documentation with usage examples
+- Updated all code examples to TypeScript syntax
+- Package now includes `.d.ts` type declaration files
+- Improved IDE support with autocomplete and inline documentation
+
+### v1.0.2
+
+- Minor bug fixes and improvements
 
 ### v1.0.1
 

@@ -3,43 +3,56 @@
   "version": "1.0.3",
   "description": "Node.js wrapper for Ideogram API - Image generation, editing, remixing, and manipulation",
   "type": "module",
-  "main": "api.js",
+  "main": "dist/api.js",
+  "types": "dist/api.d.ts",
   "bin": {
-    "ideogram": "./cli.js"
+    "ideogram": "dist/cli.js"
   },
   "exports": {
-    ".": "./api.js",
-    "./api": "./api.js",
-    "./utils": "./utils.js",
-    "./config": "./config.js"
+    ".": {
+      "import": "./dist/api.js",
+      "types": "./dist/api.d.ts"
+    },
+    "./api": {
+      "import": "./dist/api.js",
+      "types": "./dist/api.d.ts"
+    },
+    "./utils": {
+      "import": "./dist/utils.js",
+      "types": "./dist/utils.d.ts"
+    },
+    "./config": {
+      "import": "./dist/config.js",
+      "types": "./dist/config.d.ts"
+    }
   },
   "files": [
-    "api.js",
-    "cli.js",
-    "utils.js",
-    "config.js",
+    "dist",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
     "semantic-release": "semantic-release",
-    "ideogram": "node cli.js",
-    "ideogram:help": "node cli.js --help",
-    "ideogram:examples": "node cli.js --examples",
-    "ideogram:generate": "node cli.js generate",
-    "ideogram:edit": "node cli.js edit",
-    "ideogram:remix": "node cli.js remix",
-    "ideogram:reframe": "node cli.js reframe",
-    "ideogram:replace-background": "node cli.js replace-background",
-    "ideogram:upscale": "node cli.js upscale",
-    "ideogram:describe": "node cli.js describe",
-    "ideogram:list-styles": "node cli.js list-style-presets",
-    "ideogram:list-ratios": "node cli.js list-aspect-ratios",
-    "ideogram:list-resolutions": "node cli.js list-resolutions"
+    "prepublishOnly": "npm run build",
+    "ideogram": "tsx src/cli.ts",
+    "ideogram:help": "tsx src/cli.ts --help",
+    "ideogram:examples": "tsx src/cli.ts --examples",
+    "ideogram:generate": "tsx src/cli.ts generate",
+    "ideogram:edit": "tsx src/cli.ts edit",
+    "ideogram:remix": "tsx src/cli.ts remix",
+    "ideogram:reframe": "tsx src/cli.ts reframe",
+    "ideogram:replace-background": "tsx src/cli.ts replace-background",
+    "ideogram:upscale": "tsx src/cli.ts upscale",
+    "ideogram:describe": "tsx src/cli.ts describe",
+    "ideogram:list-styles": "tsx src/cli.ts list-style-presets",
+    "ideogram:list-ratios": "tsx src/cli.ts list-aspect-ratios",
+    "ideogram:list-resolutions": "tsx src/cli.ts list-resolutions"
   },
   "keywords": [
     "ideogram",
@@ -50,7 +63,8 @@
     "image-editing",
     "upscale",
     "remix",
-    "reframe"
+    "reframe",
+    "typescript"
   ],
   "author": "img-gen Contributors",
   "license": "MIT",
@@ -80,9 +94,12 @@
     "@semantic-release/github": "^11.0.6",
     "@semantic-release/npm": "^12.0.2",
     "@semantic-release/release-notes-generator": "^14.1.0",
-    "@vitest/coverage-v8": "^1.1.0",
-    "@vitest/ui": "^1.1.0",
+    "@types/node": "^24.10.1",
+    "@vitest/coverage-v8": "^4.0.10",
+    "@vitest/ui": "^4.0.10",
     "semantic-release": "^24.2.9",
-    "vitest": "^1.1.0"
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.10"
   }
 }

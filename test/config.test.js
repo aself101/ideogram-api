@@ -20,7 +20,7 @@ import {
   getIdeogramApiKey,
   validateOperationParams,
   redactApiKey
-} from '../config.js';
+} from '../src/config.js';
 
 describe('Configuration Constants', () => {
   describe('Base URL', () => {

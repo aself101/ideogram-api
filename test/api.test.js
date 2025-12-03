@@ -4,8 +4,8 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { IdeogramAPI, extractImages, extractDescriptions } from '../api.js';
-import { BASE_URL } from '../config.js';
+import { IdeogramAPI, extractImages, extractDescriptions } from '../src/api.js';
+import { BASE_URL } from '../src/config.js';
 
 describe('IdeogramAPI Class', () => {
   let api;
