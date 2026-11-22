@@ -3,16 +3,17 @@
 [![npm version](https://img.shields.io/npm/v/ideogram-api.svg)](https://www.npmjs.com/package/ideogram-api)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js Version](https://img.shields.io/node/v/ideogram-api)](https://nodejs.org)
-[![Tests](https://img.shields.io/badge/tests-203%20passing-brightgreen)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg)](https://www.typescriptlang.org/)
 
-A Node.js wrapper for the [Ideogram API](https://ideogram.ai/api) that provides comprehensive access to AI-powered image generation, editing, remixing, and manipulation. Generate, edit, upscale, and transform images with 62 style presets through a simple command-line interface.
+A Node.js wrapper for the [Ideogram API](https://ideogram.ai/api): image generation, editing, remixing and manipulation with Ideogram 3.0 (v1 API), Ideogram 4.0 / 4.5 / 4.6 and automatic model selection (v2 API), SVG generation with Ideogram Vector 1, and video with MiniMax H3 and Seedance 2.5. Use it as a library or through the `ideogram` command-line tool.
 
-This service follows the data-collection architecture pattern with organized data storage, synchronous responses, comprehensive logging, and CLI orchestration.
+This service follows the data-collection architecture pattern with organized data storage, comprehensive logging, and CLI orchestration. The Ideogram 3.0 operations and the v2 image endpoints answer synchronously by default; SVG and video are always asynchronous and are polled for their results (see [Ideogram 4.x, SVG and Video](#ideogram-4x-svg-and-video-v2-api)).
+
+HTTP goes through Node's built-in `fetch`; the package has no HTTP-client dependency.
 
 ## Quick Demo
 
-**Coming Soon:** Asciinema CLI demo showcasing all 7 operations
+**Coming Soon:** Asciinema CLI demo
 
 ## Quick Start
 
@@ -48,6 +49,7 @@ console.log('Generated images:', response.data);
 
 - [Overview](#overview)
 - [Operations](#operations)
+- [Ideogram 4.x, SVG and Video (v2 API)](#ideogram-4x-svg-and-video-v2-api)
 - [Authentication Setup](#authentication-setup)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
@@ -66,11 +68,14 @@ console.log('Generated images:', response.data);
 
 The Ideogram API provides access to state-of-the-art image generation and manipulation. This Node.js service implements:
 
-- **7 Operations** - Generate, Edit, Remix, Reframe, Replace Background, Upscale, Describe
+- **6 Ideogram 3.0 Operations** - Generate, Edit, Remix, Reframe, Replace Background, Describe
+- **Upscale** - 2x, 4x or 8x through Ideogram's v2 upscaler (since 2.0)
+- **v2 API** - Ideogram 4.0 (plus transparent and custom-model variants), 4.5 and 4.6 generate and precise edit, automatic model selection, SVG generation, and six video endpoints
+- **Dry runs** - Every v2 call accepts `dryRun: true` (`--dry-run`): the request is validated and priced, and nothing is generated or billed
 - **62 Style Presets** - More artistic styles than any other service
-- **Synchronous Responses** - All operations return immediately (no polling required!)
-- **Production Security** - API key redaction, error sanitization, HTTPS enforcement, comprehensive SSRF protection (including IPv4-mapped IPv6 bypass prevention)
-- **DoS Prevention** - Request timeouts (120s API, 60s downloads), file size limits (50MB), redirect limits
+- **Synchronous by default** - Ideogram 3.0 and the v2 image endpoints return results directly; SVG and video return a `generation_id` to poll (`waitForGeneration`, or `--wait` on the CLI)
+- **Production Security** - API key redaction, error sanitization, HTTPS enforcement, comprehensive SSRF protection (including IPv4-mapped IPv6 bypass prevention, checked again on every download redirect)
+- **DoS Prevention** - Request timeouts (120s v1 API, 300s v2 API, 60s image downloads), file size limits, redirect limits
 - **DNS Rebinding Prevention** - Blocks domains resolving to internal IPs (prevents TOCTOU attacks)
 - **Parameter Validation** - Pre-flight validation catches invalid parameters before API calls
 - **API Key Authentication** - Multiple configuration methods with secure handling
@@ -79,7 +84,7 @@ The Ideogram API provides access to state-of-the-art image generation and manipu
 - **Image Input Support** - Convert local files or URLs to Buffers with validation
 - **Organized Storage** - Structured directories with timestamped files and metadata
 - **CLI Orchestration** - Command-line tool for easy batch processing
-- **Comprehensive Testing** - 203 tests with Vitest for reliability
+- **Comprehensive Testing** - Vitest suite covering every endpoint's request shape, the validators, and the HTTP layer
 
 ## Operations
 
@@ -148,13 +153,13 @@ Replace image backgrounds while intelligently preserving foreground subjects.
 
 ### Upscale
 
-High-quality image upscaling with optional prompt-guided enhancement.
+Enlarge an image 2x, 4x or 8x (`upscaleFactor: 'x2' | 'x4' | 'x8'`, default `x2`). Ideogram picks the upscaling model per request. The output may not exceed 8192px on either side.
+
+> **Changed in 2.0.** `upscale()` calls `/v2/image/upscale/auto`. The v1 `/upscale` endpoint it used before was retired by Ideogram: on 2026-11-22 it answered every request with 400 "The selected model version is no longer supported". The v2 upscaler has no `prompt`, `resemblance`, `detail`, `magicPromptOption` or `numImages`. Passing one throws, because the API would otherwise ignore it without a word. It supports `seed`, `async`, `webhookUrl` and `dryRun`.
 
 **Features:**
-- Resemblance control (0-100)
-- Detail enhancement (0-100)
-- Optional prompt guidance
-- Up to 4 variations
+- 2x, 4x or 8x enlargement
+- Dry-run pricing, async with polling, webhooks
 
 **Use Cases:** Print preparation, detail enhancement, resolution increase
 
@@ -168,6 +173,99 @@ Get AI-generated descriptions of images using Ideogram's vision model.
 - Multiple descriptions per image
 
 **Use Cases:** Alt text generation, image cataloging, accessibility, content moderation
+
+## Ideogram 4.x, SVG and Video (v2 API)
+
+Ideogram's v2 API puts each model behind its own endpoint. This package covers 16 of them, plus polling:
+
+| Model / task | Method | CLI command | Body | Response |
+|---|---|---|---|---|
+| Ideogram 4.0 | `generateV4` | `generate-v4` | JSON | images (or `async`) |
+| Ideogram 4.0 transparent | `generateV4Transparent` | `generate-transparent` | JSON | images (or `async`) |
+| Ideogram 4.0 custom model | `generateV4Custom` | `generate-custom` | JSON | images (or `async`) |
+| Ideogram 4.5 generate / edit | `generateV45` | `generate-v45` | multipart | images (or `async`) |
+| Ideogram 4.6 generate / edit | `generateV46` | `generate-v46` | multipart | images (or `async`) |
+| Automatic model selection | `generateAuto` | `generate-auto` | multipart | images (or `async`) |
+| Ideogram 4.5 precise edit | `preciseEditV45` | `precise-edit` | multipart | images (or `async`) |
+| Ideogram 4.6 precise edit | `preciseEditV46` | `precise-edit-v46` | multipart | images (or `async`) |
+| Upscale (automatic model) | `upscale` | `upscale` | multipart | image (or `async`) |
+| SVG (Ideogram Vector 1) | `generateSvg` | `generate-svg` | multipart | `generation_id` |
+| MiniMax H3 text to video | `minimaxH3TextToVideo` | `minimax-text-to-video` | JSON | `generation_id` |
+| MiniMax H3 image to video | `minimaxH3ImageToVideo` | `minimax-image-to-video` | multipart | `generation_id` |
+| MiniMax H3 reference to video | `minimaxH3ReferenceToVideo` | `minimax-reference-to-video` | multipart | `generation_id` |
+| Seedance 2.5 text to video | `seedance25TextToVideo` | `seedance-text-to-video` | JSON | `generation_id` |
+| Seedance 2.5 image to video | `seedance25ImageToVideo` | `seedance-image-to-video` | multipart | `generation_id` |
+| Seedance 2.5 reference to video | `seedance25ReferenceToVideo` | `seedance-reference-to-video` | multipart | `generation_id` |
+| Poll any async generation | `getGeneration`, `waitForGeneration` | `get-generation <id> [--wait]` | | status, then results |
+
+The rest of the v2 surface is **not covered**: about 65 more endpoints (Ideogram 2/3 on v2, remix, inpaint, reframe, the per-model upscalers (Topaz, Nano Banana Pro), Kling and Seedance 2 video, GPT-image, Nano Banana, vectorize, layerize, the design tools, and account endpoints). The v3 operations above stay on the v1 API.
+
+**v2 field names are camelCase in this library and lowercase-valued**, unlike v3: `magicPrompt: 'auto'`, `renderingSpeed: 'turbo'`. Each endpoint has its own limits; `validateV2Params(operation, params)` checks them before you send (the CLI always runs it, the library leaves it to you).
+
+### Dry runs: price before you spend
+
+Every v2 method takes `dryRun: true` (CLI: `--dry-run`). The request is validated and priced, and nothing is generated, stored or billed. The result is a `PriceQuote`:
+
+```typescript
+import { IdeogramAPI, isPriceQuote } from 'ideogram-api';
+
+const api = new IdeogramAPI(process.env.IDEOGRAM_API_KEY!);
+const quote = await api.seedance25TextToVideo({ prompt: 'A red fox in snow', resolution: '1080p', duration: 10, dryRun: true });
+if (isPriceQuote(quote)) console.log(`$${quote.usd_micros / 1e6}`);
+```
+
+Video is priced per second of output and per resolution tier, and is far more expensive than images. Prices measured with dry runs on 2026-11-22, which matched the amounts later billed for the same requests:
+
+| Request | Price |
+|---|---|
+| Ideogram 4.6, `very_low`, 2K | $0.008 |
+| Ideogram 4.0 turbo / 4.0 transparent turbo 1K / 4.5 `low` | $0.03 |
+| Ideogram 4.6 `low`, `auto_4k` | $0.06 |
+| SVG, `low` | $0.13 |
+| MiniMax H3, 480P, 5 s | $0.25 |
+| Seedance 2.5, 480p, 4 s | $0.41 |
+| Seedance 2.5, 720p, 4 s | $0.92 |
+| Seedance 2.5 image / reference to video, 720p, duration omitted | $6.93 |
+
+Two things the quotes showed that the docs do not say:
+
+- **An omitted Seedance `duration` is quoted at the maximum** for image and reference to video (30 s: the $6.93 row), but at about 5 s for text to video. Set `duration` when cost matters.
+- **`generateAudio` did not change the quote or the bill** at 480p / 4 s, although the API docs say audio "roughly doubles the provider cost". The returned video did carry an audio track.
+
+### Synchronous, async and always-async
+
+- **v2 image endpoints** return the images by default. Set `async: true` (CLI `--async`) to get a `generation_id` back at once; `waitForGeneration(id)` polls until it completes. `webhookUrl` asks Ideogram to POST the result to you instead.
+- **SVG and video are always asynchronous.** They resolve to `{ generation_id, created? }`. Collect the result with `waitForGeneration`, then `extractSvgUrls` / `extractVideoUrls`. On the CLI, `--wait` polls and downloads (default poll interval 5 s, give-up time 30 minutes; the job keeps running if you stop waiting, and `get-generation <id> --wait` picks it up later).
+
+```typescript
+import { IdeogramAPI, extractVideoUrls } from 'ideogram-api';
+
+const ack = await api.minimaxH3ImageToVideo({ prompt: 'The camera pans right', image: './beach.png', resolution: '768P' });
+const done = await api.waitForGeneration(ack.generation_id, { intervalMs: 5000, timeoutMs: 30 * 60 * 1000 });
+console.log(extractVideoUrls(done));
+```
+
+`waitForGeneration` defaults to a 10-minute limit, which a long video can exceed; pass `timeoutMs`. Videos and SVGs are downloaded as streams (`downloadToFile` in `ideogram-api/utils`), not buffered in memory.
+
+### Model notes
+
+- **Ideogram 4.6 vs 4.5.** Same fields. 4.6 renders exact sizes up to 4096x4096 (8192 per side), with no preset list; adds `size: 'auto_2k' | 'auto_4k'` (no `auto_4k` at `very_low`); runs `quality: 'very_low'` without source images (capped at 2048x2048 and 4608 per side); and its precise edit bounds a whole-image edit at 4096x4096 instead of 2048x2048.
+- **Precise edit.** The output keeps the input's exact width and height. `contextWindow` defaults to `'auto'`: a region around the mask, or the whole image when there is no mask. An image larger than the model's bound comes back scaled down unless the edit is confined to a region.
+- **Masks: observed limitation.** The precise-edit endpoints read and validate the mask: they reject one whose size differs from the image, or one that is all black or all white. In live edits on 2026-11-22, though, the mask did not confine the change: in 6 of 7 masked edits (4.5 generate, 4.5 and 4.6 precise edit) the edit landed where the prompt pointed, in white ("keep") areas, and left the black area untouched. The seventh agreed with its mask only because the prompt pointed into it. Check results if you rely on a mask to protect part of an image.
+- **Automatic model selection.** `styleType` and `colorPalette` (a preset name such as `'ember'`, or `{ members: [{ color_hex: '#ff0000' }] }`) narrow the choice to models that support them, and cannot be combined with source images. There is no `private` field any more: Ideogram removed it, and the API silently ignores fields it does not know.
+- **SVG.** `imageAssetIdentifiers` references existing Ideogram assets and takes priority over uploaded `images`. `useGradient: false` (`--no-gradient`) gives flat colors only.
+- **Video.** MiniMax H3 spells resolutions in uppercase (`480P`, `768P`, `2K`, `4K`; the last two are upscaled from 768P), takes 5-15 s, and its reference mode accepts up to 3 MP3/WAV audios (which need a reference image). Seedance 2.5 spells them in lowercase (`480p`, `720p`, `1080p`), takes 4-30 s, and its reference mode needs at least one image. In live tests every MiniMax H3 video carried an audio track, although MiniMax has no audio option.
+
+### Errors
+
+Failures throw `IdeogramAPIError` (a subclass of `Error`):
+
+- `status`: the HTTP status, when the API answered.
+- `rejectReason` / `maxInflightRequests`: why a 402 or 429 was refused (`insufficient_funds`, `inflight_limit`, ...).
+- `failureReason`: from `waitForGeneration`, why an async generation failed (e.g. `content_policy_violation`).
+- `code`: set when **no HTTP response arrived** (e.g. `ECONNRESET`, or `ETIMEDOUT` for a timeout).
+
+**A request with no response may still have been billed.** On 2026-11-22 one `generate-auto` request failed client-side with no response and was charged all the same. Check your usage before retrying a failed generation.
 
 ## Authentication Setup
 
@@ -253,11 +351,8 @@ ideogram generate \
   --style-preset TRAVEL_POSTER \
   --aspect-ratio "16x9"
 
-# Upscale an image
-ideogram upscale \
-  --image ./photo.jpg \
-  --resemblance 90 \
-  --detail 85
+# Upscale an image 4x
+ideogram upscale --image ./photo.jpg --upscale-factor x4
 ```
 
 ### Example Commands
@@ -304,7 +399,7 @@ ideogram describe --image photo.jpg
 
 ```typescript
 import { IdeogramAPI, extractImages, extractDescriptions } from 'ideogram-api';
-import type { GenerationResponse, DescribeResponse, ImageData } from 'ideogram-api';
+import type { GenerationResponse, DescribeResponse, ImageData, UpscaleResponse } from 'ideogram-api';
 
 const api = new IdeogramAPI('your_api_key');
 
@@ -330,12 +425,10 @@ const editResponse: GenerationResponse = await api.edit({
   renderingSpeed: 'QUALITY'
 });
 
-// Upscale image
-const upscaleResponse: GenerationResponse = await api.upscale({
+// Upscale image 4x
+const upscaleResponse: UpscaleResponse = await api.upscale({
   image: './low_res.jpg',
-  resemblance: 85,
-  detail: 90,
-  prompt: 'Enhance details and sharpness'
+  upscaleFactor: 'x4'
 });
 
 // Describe image
@@ -374,7 +467,7 @@ ideogram <operation> [options]
 --aspect-ratio <ratio>       Output aspect ratio (e.g., "16x9", "1x1")
 --resolution <WxH>           Specific resolution (e.g., "1024x1024")
 --rendering-speed <speed>    FLASH | TURBO | DEFAULT | QUALITY
---num-images <number>        Number of images to generate (1-8, upscale max 4)
+--num-images <number>        Number of images to generate (1-8)
 --seed <number>              Random seed for reproducibility
 --style-preset <preset>      One of 62 style presets
 --negative-prompt <text>     Things to avoid in generation
@@ -404,8 +497,10 @@ ideogram <operation> [options]
 ### Upscale-Specific Options
 
 ```bash
---resemblance <0-100>        Similarity to original (default: 80)
---detail <0-100>             Detail level (default: 80)
+--upscale-factor <x2|x4|x8>  Enlargement (default: x2); output is capped at 8192px per side
+--seed <number>              Random seed
+--dry-run                    Price the request without running or billing it
+--async [--wait]             Return a generation_id at once; --wait polls and downloads
 ```
 
 ### Describe-Specific Options
@@ -425,6 +520,8 @@ ideogram list-resolutions    List all 69 resolutions
 ```
 
 ## API Methods
+
+The methods below are the Ideogram 3.0 (v1 API) operations. The v2 methods (`generateV4`, `generateV45`, `generateV46`, `preciseEditV46`, `generateSvg`, the video methods, `waitForGeneration`, ...) are listed in [Ideogram 4.x, SVG and Video](#ideogram-4x-svg-and-video-v2-api), and each carries a JSDoc example.
 
 ### Core Operation Methods
 
@@ -509,18 +606,15 @@ Replace image backgrounds.
 
 #### `async upscale(params)`
 
-High-quality image upscaling.
+Upscale 2x, 4x or 8x with Ideogram's v2 upscaler (`/v2/image/upscale/auto`; changed in 2.0, see [Upscale](#upscale)).
 
 **Parameters:**
-- `image` (string|Buffer, required): Image file path or Buffer
-- `prompt` (string): Optional guidance prompt
-- `resemblance` (number): Similarity to original (0-100)
-- `detail` (number): Detail level (0-100)
-- `magicPromptOption` (string): AUTO, ON, or OFF
-- `numImages` (number): Number of variants (1-4)
+- `image` (string|Buffer, required): Image file path or Buffer (max 50MB)
+- `upscaleFactor` (string): `'x2'` (default), `'x4'` or `'x8'`
 - `seed` (number): Random seed
+- `async` (boolean), `webhookUrl` (string), `dryRun` (boolean), `timeoutMs` (number): as on the other v2 methods
 
-**Returns:** Response object with upscaled images
+**Returns:** `UpscaleResponse` (`generation_id`, `seed`, `width`, `height`, and `data` when synchronous), or a `PriceQuote` for a dry run. Pass it to `extractImageUrls` for the image URL.
 
 #### `async describe(params)`
 
@@ -555,6 +649,8 @@ const images: ImageData[] = extractImages(response);
 const descriptions: string[] = extractDescriptions(describeResponse);
 // Returns: ['A serene mountain landscape...', ...]
 ```
+
+For v2 results: `extractImageUrls(response)` returns the safe image URLs from a v2 response or a polled generation; `extractVideoUrls(status)` and `extractSvgUrls(status)` return the video and SVG URLs from a completed `GenerationStatus`; `isPriceQuote(result)` tells a dry-run quote from a result.
 
 ## Examples
 
@@ -657,25 +753,15 @@ const response = await api.remix({
 });
 ```
 
-### Example 6: Image Upscaling with Enhancement
+### Example 6: Image Upscaling
 
 ```bash
-ideogram upscale \
-  --image ./low_res.jpg \
-  --resemblance 90 \
-  --detail 85 \
-  --prompt "Enhance facial details and sharpness" \
-  --num-images 2
+ideogram upscale --image ./low_res.jpg --upscale-factor x4
 ```
 
 ```typescript
-const response = await api.upscale({
-  image: './low_res.jpg',
-  resemblance: 90,
-  detail: 85,
-  prompt: 'Enhance facial details and sharpness',
-  numImages: 2
-});
+const response = await api.upscale({ image: './low_res.jpg', upscaleFactor: 'x4' });
+console.log(`${response.width}x${response.height}`, extractImageUrls(response));
 ```
 
 ### Example 7: Background Replacement
@@ -698,8 +784,8 @@ const response = await api.replaceBackground({
 ### Example 8: Complete Workflow in Code
 
 ```typescript
-import { IdeogramAPI, extractImages, extractDescriptions } from 'ideogram-api';
-import type { GenerationResponse, DescribeResponse, ImageData } from 'ideogram-api';
+import { IdeogramAPI, extractImages, extractImageUrls, extractDescriptions } from 'ideogram-api';
+import type { GenerationResponse, DescribeResponse, ImageData, UpscaleResponse } from 'ideogram-api';
 
 const api = new IdeogramAPI(process.env.IDEOGRAM_API_KEY!);
 
@@ -717,17 +803,16 @@ console.log(`Generated ${genImages.length} images`);
 
 // 2. Upscale the first image
 console.log('Upscaling image...');
-const upscaleResponse: GenerationResponse = await api.upscale({
+const upscaleResponse: UpscaleResponse = await api.upscale({
   image: Buffer.from(await fetch(genImages[0].url).then(r => r.arrayBuffer())),
-  resemblance: 90,
-  detail: 85
+  upscaleFactor: 'x2'
 });
 
 // 3. Describe the upscaled image
 console.log('Getting description...');
-const upscaledImages: ImageData[] = extractImages(upscaleResponse);
+const [upscaledUrl] = extractImageUrls(upscaleResponse);
 const describeResponse: DescribeResponse = await api.describe({
-  image: Buffer.from(await fetch(upscaledImages[0].url).then(r => r.arrayBuffer()))
+  image: Buffer.from(await fetch(upscaledUrl).then(r => r.arrayBuffer()))
 });
 
 const descriptions: string[] = extractDescriptions(describeResponse);
@@ -754,11 +839,20 @@ datasets/ideogram/
 │   └── ...
 ├── replace-background-v3/
 │   └── ...
-├── upscale/
+├── upscale-auto/
 │   └── ...
-└── describe/
-    └── 20250120_144000_description.json
+├── describe/
+│   └── 20250120_144000_description.json
+├── generate-v46/                      # v2 commands: one folder per operation
+│   └── ...
+├── seedance-2-5-text-to-video/        # SVG and video results saved with --wait
+│   ├── 20261122_184617_a-red-fox.mp4
+│   └── 20261122_184618_a-red-fox.json
+└── generations/                       # results fetched with get-generation
+    └── ...
 ```
+
+v2 metadata files record `generationId` and `usageCostUsdMicros` (when Ideogram reports it), and list each result under `response.items` with its `objectType`, saved `path` and, for videos, the measured `duration` and `aspectRatio`.
 
 **Metadata Format:**
 
@@ -843,10 +937,11 @@ const api = new IdeogramAPI('key', 'http://insecure-api.com');
 
 ### Request Timeout & Size Protection
 
-- **API request timeout**: 120 seconds
-- **Image download timeout**: 60 seconds
-- **File size limit**: 50MB maximum
-- **Redirect limit**: Maximum 5 redirects
+- **API request timeout**: 120 seconds (v1), 300 seconds (v2); `timeoutMs` overrides it per v2 request
+- **Image download timeout**: 60 seconds; video and SVG downloads 5 minutes, streamed to disk
+- **Response size limits**: 100MB for API responses, 200MB per image download, 2GB per video download
+- **Upload limits**: 50MB per image file; per-request ceilings follow each endpoint's documented file count and size
+- **Redirects**: API calls refuse redirects, so the `Api-Key` header is never sent to another host. Downloads follow at most 5, and the SSRF check runs again on every hop
 
 ### Parameter Validation
 
@@ -862,7 +957,7 @@ The service includes comprehensive error handling with clear messages:
 
 ### Synchronous Responses
 
-Unlike many APIs, Ideogram returns results immediately - no polling required! This makes error handling simpler:
+The Ideogram 3.0 operations and the v2 image endpoints (unless you set `async`) return results directly, so a single `try`/`catch` covers the whole call. SVG and video do not: see [Synchronous, async and always-async](#synchronous-async-and-always-async).
 
 ```typescript
 try {
@@ -878,9 +973,14 @@ try {
 
 - **400 Bad Request**: Invalid parameters
 - **401 Unauthorized**: Invalid API key
-- **422 Unprocessable Entity**: Parameter validation failed
-- **429 Too Many Requests**: Rate limit exceeded
+- **402 Payment Required** (v2): out of credits or quota; see `error.rejectReason`
+- **403 Forbidden**: no access to this model (e.g. a custom model you do not own)
+- **404 Not Found**: unknown generation ID, or a referenced asset that does not exist
+- **422 Unprocessable Entity**: Parameter validation failed, or (v2) a rule such as `style_type` with source images
+- **429 Too Many Requests**: Rate limit exceeded; on v2, `error.rejectReason` says which limit
 - **500 Internal Server Error**: API server error
+
+See [Errors](#errors) for the `IdeogramAPIError` fields.
 
 ### Error Messages
 
@@ -990,7 +1090,7 @@ Error: Request failed with status code 429
 ### Module Not Found
 
 ```
-Error: Cannot find module 'axios'
+Error: Cannot find module 'commander'
 ```
 
 **Solution:** Reinstall dependencies:
@@ -1142,6 +1242,9 @@ images.forEach((img: ImageData) => {
 | **Enums/Unions** | `RenderingSpeed`, `MagicPromptOption`, `StyleType`, `DescribeModelVersion` |
 | **Color Palettes** | `ColorPalette`, `ColorPalettePreset`, `CustomColorPalette` |
 | **Validation** | `ValidationResult`, `ValidationParams`, `OperationConstraint` |
+| **v2 parameters** | `GenerateV4Params`, `GenerateV4TransparentParams`, `GenerateV4CustomParams`, `GenerateV45Params`, `GenerateV46Params`, `GenerateAutoParams`, `PreciseEditV45Params`, `PreciseEditV46Params`, `GenerateSvgParams`, `MinimaxH3TextToVideoParams`, `MinimaxH3ImageToVideoParams`, `MinimaxH3ReferenceToVideoParams`, `Seedance25TextToVideoParams`, `Seedance25ImageToVideoParams`, `Seedance25ReferenceToVideoParams` |
+| **v2 responses** | `V2GenerationResponse`, `V2Acknowledgement`, `PriceQuote`, `GenerationStatus`, `GenerationDataItem`, `VideoGenerationItem`, `SvgGenerationItem` |
+| **v2 values** | `MagicPromptMode`, `RenderingSpeedV4`, `QualityV45`, `ImageSizeV46`, `AutoStyleType`, `V2ColorPalette`, `SvgQuality`, `AssetIdentifier`, `MinimaxH3Resolution`, `Seedance25Resolution`, ... (each widens to `string`, so values Ideogram adds later still type-check) |
 
 ### IDE Support
 
@@ -1195,7 +1298,7 @@ npm run test:coverage
 npm run test:ui
 ```
 
-**Test Coverage:** 203 tests covering all operations, security features, and utilities.
+**Test Coverage:** every operation's request shape (HTTP is stubbed, so the suite makes no network calls), the v2 validators, security features, the HTTP layer's limits, and utilities. `npm test` prints the current count.
 
 ## Development Scripts
 
@@ -1246,7 +1349,7 @@ Rate limits depend on your Ideogram API plan. Check your account at [https://ide
 
 ## Requirements
 
-- Node.js >= 18.0.0
+- Node.js >= 22.0.0
 - Ideogram API key
 
 ## Additional Resources
@@ -1285,6 +1388,15 @@ Contributions welcome! Please follow the existing code patterns and include test
 - **API Keys**: [https://ideogram.ai/api](https://ideogram.ai/api)
 
 ## Changelog
+
+`CHANGELOG.md` is generated from commit messages by semantic-release on each release. The entries below are the hand-written history up to 1.0.3.
+
+### Unreleased
+
+- v2 API: Ideogram 4.0 / 4.5 / 4.6 generate and precise edit, automatic model selection, SVG (Ideogram Vector 1), and MiniMax H3 / Seedance 2.5 video; dry-run pricing; async polling
+- HTTP moved from axios to Node's built-in `fetch`; `axios` and `form-data` are no longer dependencies, and `buildFormData` returns a native `FormData`
+- `upscale()` calls the v2 upscaler (`upscaleFactor` x2 / x4 / x8); Ideogram retired the v1 endpoint, and its `prompt` / `resemblance` / `detail` / `magicPromptOption` / `numImages` are gone
+- Requires Node.js 22 or later
 
 ### v1.0.3
 

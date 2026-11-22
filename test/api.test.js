@@ -296,45 +296,16 @@ describe('IdeogramAPI Class', () => {
   });
 
   describe('Upscale Method', () => {
-    it('should require image', () => {
-      expect(typeof api.upscale).toBe('function');
+    it('rejects the 1.x-only fields instead of dropping them (v1 upscale was retired)', async () => {
+      for (const field of ['prompt', 'resemblance', 'detail', 'magicPromptOption', 'numImages']) {
+        await expect(api.upscale({ image: Buffer.from([0xff, 0xd8, 0xff]), [field]: 1 })).rejects.toThrow(
+          `does not accept ${field}`
+        );
+      }
     });
 
-    it('should accept resemblance and detail parameters', () => {
-      const params = {
-        image: './low_res.jpg',
-        resemblance: 85,
-        detail: 90
-      };
-
-      expect(typeof api.upscale).toBe('function');
-    });
-
-    it('should accept optional prompt', () => {
-      const params = {
-        image: Buffer.from([0xFF, 0xD8]),
-        prompt: 'Enhance details',
-        resemblance: 80,
-        detail: 95,
-        numImages: 2
-      };
-
-      expect(typeof api.upscale).toBe('function');
-    });
-
-    it('should build image_request object', () => {
-      const params = {
-        image: './image.jpg',
-        prompt: 'upscale',
-        resemblance: 90,
-        detail: 85,
-        magicPromptOption: 'ON',
-        numImages: 1,
-        seed: 99999
-      };
-
-      expect(typeof api.upscale).toBe('function');
-      // Method should build image_request nested object
+    it('requires an image', async () => {
+      await expect(api.upscale({})).rejects.toThrow('image is required');
     });
   });
 

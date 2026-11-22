@@ -32,9 +32,16 @@ describe('Configuration Constants', () => {
   });
 
   describe('Endpoints', () => {
-    it('should have all 7 endpoints defined', () => {
+    it('should define the 6 v1 endpoints and the 17 v2 endpoints', () => {
       expect(ENDPOINTS).toBeDefined();
-      expect(Object.keys(ENDPOINTS).length).toBe(7);
+      expect(Object.keys(ENDPOINTS).sort()).toEqual([
+        'DESCRIBE', 'EDIT_V3', 'GENERATE_AUTO', 'GENERATE_SVG', 'GENERATE_V3', 'GENERATE_V4',
+        'GENERATE_V45', 'GENERATE_V46', 'GENERATE_V4_CUSTOM', 'GENERATE_V4_TRANSPARENT',
+        'GENERATIONS', 'PRECISE_EDIT_V45', 'PRECISE_EDIT_V46', 'REFRAME_V3', 'REMIX_V3',
+        'REPLACE_BACKGROUND_V3', 'UPSCALE_AUTO',
+        'VIDEO_MINIMAX_H3_IMAGE', 'VIDEO_MINIMAX_H3_REFERENCE', 'VIDEO_MINIMAX_H3_TEXT',
+        'VIDEO_SEEDANCE_25_IMAGE', 'VIDEO_SEEDANCE_25_REFERENCE', 'VIDEO_SEEDANCE_25_TEXT',
+      ]);
     });
 
     it('should have generate endpoint', () => {
@@ -57,8 +64,8 @@ describe('Configuration Constants', () => {
       expect(ENDPOINTS.REPLACE_BACKGROUND_V3).toBe('/v1/ideogram-v3/replace-background');
     });
 
-    it('should have upscale endpoint', () => {
-      expect(ENDPOINTS.UPSCALE).toBe('/upscale');
+    it('should have the v2 upscale endpoint (v1 /upscale was retired in 2.0)', () => {
+      expect(ENDPOINTS.UPSCALE_AUTO).toBe('/v2/image/upscale/auto');
     });
 
     it('should have describe endpoint', () => {
@@ -269,25 +276,6 @@ describe('Operation Constraints', () => {
     });
   });
 
-  describe('upscale constraints', () => {
-    it('should have resemblance range', () => {
-      const constraints = OPERATION_CONSTRAINTS['upscale'];
-      expect(constraints.resemblance.min).toBe(0);
-      expect(constraints.resemblance.max).toBe(100);
-    });
-
-    it('should have detail range', () => {
-      const constraints = OPERATION_CONSTRAINTS['upscale'];
-      expect(constraints.detail.min).toBe(0);
-      expect(constraints.detail.max).toBe(100);
-    });
-
-    it('should have numImages max of 4', () => {
-      const constraints = OPERATION_CONSTRAINTS['upscale'];
-      expect(constraints.numImages.max).toBe(4);
-    });
-  });
-
   describe('describe constraints', () => {
     it('should have describeModelVersion options', () => {
       const constraints = OPERATION_CONSTRAINTS['describe'];
@@ -483,54 +471,6 @@ describe('Configuration Functions', () => {
             resolution: '999x999'
           });
         }).toThrow('Invalid resolution');
-      });
-    });
-
-    describe('upscale validation', () => {
-      it('should accept valid resemblance', () => {
-        expect(() => {
-          validateOperationParams('upscale', {
-            resemblance: 85
-          });
-        }).not.toThrow();
-      });
-
-      it('should reject resemblance out of range', () => {
-        expect(() => {
-          validateOperationParams('upscale', {
-            resemblance: -1
-          });
-        }).toThrow('must be between 0 and 100');
-
-        expect(() => {
-          validateOperationParams('upscale', {
-            resemblance: 101
-          });
-        }).toThrow('must be between 0 and 100');
-      });
-
-      it('should accept valid detail', () => {
-        expect(() => {
-          validateOperationParams('upscale', {
-            detail: 90
-          });
-        }).not.toThrow();
-      });
-
-      it('should reject detail out of range', () => {
-        expect(() => {
-          validateOperationParams('upscale', {
-            detail: 101
-          });
-        }).toThrow('must be between 0 and 100');
-      });
-
-      it('should reject numImages > 4', () => {
-        expect(() => {
-          validateOperationParams('upscale', {
-            numImages: 5
-          });
-        }).toThrow('must be between 1 and 4');
       });
     });
 

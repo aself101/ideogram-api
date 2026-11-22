@@ -8,8 +8,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import winston from 'winston';
-import axios from 'axios';
-import FormData from 'form-data';
+import { fetchFollowingRedirects, readBodyWithLimit, streamToFile } from './http.js';
 import { imageSize } from 'image-size';
 import { imageSizeFromFile } from 'image-size/fromFile';
 import { lookup } from 'dns/promises';
@@ -223,8 +222,24 @@ export async function validateImagePath(filepath: string): Promise<string> {
  * await assertSquareImage(imageBuffer);
  */
 export async function assertSquareImage(imageSource: string | Buffer): Promise<void> {
-  let dimensions: ImageDimensions;
+  const { width, height } = await getImageDimensions(imageSource);
 
+  if (width !== height) {
+    throw new Error(`Image must be square. Received ${width}x${height}`);
+  }
+}
+
+/**
+ * Read an image's width and height from a file path or Buffer.
+ *
+ * @param imageSource - Path to an image file, or its bytes
+ * @returns `{ width, height }`
+ * @throws Error if the dimensions cannot be read
+ *
+ * @example
+ * const { width, height } = await getImageDimensions('./photo.png');
+ */
+export async function getImageDimensions(imageSource: string | Buffer): Promise<ImageDimensions> {
   try {
     if (Buffer.isBuffer(imageSource) || ArrayBuffer.isView(imageSource)) {
       // Accept Buffer/Uint8Array inputs directly
@@ -232,26 +247,19 @@ export async function assertSquareImage(imageSource: string | Buffer): Promise<v
       if (!result.width || !result.height) {
         throw new Error('Could not determine image dimensions');
       }
-      dimensions = { width: result.width, height: result.height };
+      return { width: result.width, height: result.height };
     } else if (typeof imageSource === 'string') {
       // Paths require async helper
       const result = await imageSizeFromFile(imageSource);
       if (!result.width || !result.height) {
         throw new Error('Could not determine image dimensions');
       }
-      dimensions = { width: result.width, height: result.height };
-    } else {
-      throw new Error('Unsupported image input');
+      return { width: result.width, height: result.height };
     }
+    throw new Error('Unsupported image input');
   } catch (error) {
     const err = error as Error;
     throw new Error(`Unable to read image dimensions: ${err.message}`);
-  }
-
-  const { width, height } = dimensions;
-
-  if (width !== height) {
-    throw new Error(`Image must be square. Received ${width}x${height}`);
   }
 }
 
@@ -293,29 +301,161 @@ export async function loadImageAsBuffer(imagePath: string): Promise<Buffer> {
  * const imageBuffer = await downloadImageAsBuffer('https://example.com/image.jpg');
  */
 export async function downloadImageAsBuffer(imageUrl: string): Promise<Buffer> {
-  // Validate URL first
-  const validatedUrl = await validateImageUrl(imageUrl);
+  logger.debug(`Downloading image from URL: ${imageUrl}`);
 
-  logger.debug(`Downloading image from URL: ${validatedUrl}`);
-
-  const response = await axios.get<ArrayBuffer>(validatedUrl, {
-    responseType: 'arraybuffer',
-    timeout: 60000, // 60 seconds
-    maxContentLength: 50 * 1024 * 1024, // 50MB max
-    maxRedirects: 5,
+  // validateImageUrl runs on the URL and on every redirect target (up to 5).
+  const response = await fetchFollowingRedirects(imageUrl, {
+    validate: validateImageUrl,
+    timeoutMs: 60000,
   });
 
   // Validate Content-Type header
   const allowedMimeTypes = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
-  const contentType = response.headers['content-type']?.split(';')[0].trim();
+  const contentType = response.headers.get('content-type')?.split(';')[0].trim();
 
   if (!contentType || !allowedMimeTypes.includes(contentType)) {
+    await response.body?.cancel().catch(() => undefined);
     throw new Error(
       `Invalid Content-Type: ${contentType}. Expected image/* (png, jpeg, webp, gif)`
     );
   }
 
-  return Buffer.from(response.data);
+  return readBodyWithLimit(response, 50 * 1024 * 1024);
+}
+
+/**
+ * Download a generated result into memory, with SSRF checks on the URL and
+ * every redirect. Unlike downloadImageAsBuffer it does not check the
+ * Content-Type (Ideogram's result URLs are trusted to serve what they name).
+ *
+ * @param url - HTTPS URL of the result
+ * @param options - `maxBytes` (default 200MB, for 8k transparent PNGs) and `timeoutMs` (default 60s)
+ */
+export async function downloadBuffer(
+  url: string,
+  options: { maxBytes?: number; timeoutMs?: number } = {}
+): Promise<Buffer> {
+  const response = await fetchFollowingRedirects(url, {
+    validate: validateImageUrl,
+    timeoutMs: options.timeoutMs ?? 60000,
+  });
+  return readBodyWithLimit(response, options.maxBytes ?? 200 * 1024 * 1024);
+}
+
+/**
+ * Stream a generated result (a video, an SVG) to a file without holding it in
+ * memory, with SSRF checks on the URL and every redirect.
+ *
+ * @param url - HTTPS URL of the result
+ * @param outputPath - File to write (parent directories are created)
+ * @param options - `maxBytes` (default 2GB) and `timeoutMs` (default 5 minutes)
+ */
+export async function downloadToFile(
+  url: string,
+  outputPath: string,
+  options: { maxBytes?: number; timeoutMs?: number } = {}
+): Promise<void> {
+  const response = await fetchFollowingRedirects(url, {
+    validate: validateImageUrl,
+    timeoutMs: options.timeoutMs ?? 300000,
+  });
+  await streamToFile(response, outputPath, options.maxBytes ?? 2 * 1024 * 1024 * 1024);
+}
+
+/**
+ * Detect an image's format from its magic bytes.
+ * Used to give multipart file parts a filename and Content-Type that match
+ * their bytes. Returns null for anything that is not PNG, JPEG, WebP or GIF.
+ *
+ * @param buffer - Image bytes
+ * @returns `{ extension, mimeType }`, or null when the format is not recognized
+ *
+ * @example
+ * detectImageType(pngBuffer); // { extension: 'png', mimeType: 'image/png' }
+ */
+export function detectImageType(
+  buffer: Buffer
+): { extension: string; mimeType: string } | null {
+  if (buffer.length >= 4 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+    return { extension: 'png', mimeType: 'image/png' };
+  }
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return { extension: 'jpg', mimeType: 'image/jpeg' };
+  }
+  if (buffer.length >= 12 && buffer.slice(0, 4).toString() === 'RIFF' && buffer.slice(8, 12).toString() === 'WEBP') {
+    return { extension: 'webp', mimeType: 'image/webp' };
+  }
+  if (buffer.length >= 3 && buffer.slice(0, 3).toString() === 'GIF') {
+    return { extension: 'gif', mimeType: 'image/gif' };
+  }
+  return null;
+}
+
+/**
+ * Detect an audio file's format from its magic bytes: WAV (`RIFF....WAVE`) or
+ * MP3 (an `ID3` tag, or an MPEG audio frame sync). Returns null otherwise.
+ * Video reference endpoints accept MP3 and WAV only.
+ *
+ * @example
+ * detectAudioType(wavBuffer); // { extension: 'wav', mimeType: 'audio/wav' }
+ */
+export function detectAudioType(
+  buffer: Buffer
+): { extension: string; mimeType: string } | null {
+  if (buffer.length >= 12 && buffer.slice(0, 4).toString() === 'RIFF' && buffer.slice(8, 12).toString() === 'WAVE') {
+    return { extension: 'wav', mimeType: 'audio/wav' };
+  }
+  if (buffer.length >= 3 && buffer.slice(0, 3).toString() === 'ID3') {
+    return { extension: 'mp3', mimeType: 'audio/mpeg' };
+  }
+  // MPEG audio frame header: 11 sync bits set. JPEG (FF D8) does not match
+  // because 0xD8 & 0xE0 is 0xC0.
+  if (buffer.length >= 2 && buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0) {
+    return { extension: 'mp3', mimeType: 'audio/mpeg' };
+  }
+  return null;
+}
+
+/**
+ * Load an MP3 or WAV file for a video reference upload.
+ * Checks the magic bytes and the 15MB per-file limit both video models share.
+ * Duration limits (2-15s on MiniMax H3, 2-30s on Seedance 2.5) are enforced
+ * by the API, not here.
+ *
+ * @throws Error if the file is missing, empty, not MP3/WAV, or over 15MB
+ */
+export async function loadAudioAsBuffer(audioPath: string): Promise<Buffer> {
+  let buffer: Buffer;
+  try {
+    buffer = await fs.readFile(audioPath);
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === 'ENOENT') throw new Error(`Audio file not found: ${audioPath}`);
+    if (err.code === 'EACCES') throw new Error(`Permission denied reading audio file: ${audioPath}`);
+    throw error;
+  }
+  if (buffer.length === 0) {
+    throw new Error(`Audio file is empty: ${audioPath}`);
+  }
+  if (!detectAudioType(buffer)) {
+    throw new Error(`File does not appear to be MP3 or WAV audio: ${audioPath}`);
+  }
+  if (buffer.length > 15 * 1024 * 1024) {
+    throw new Error(`Audio file ${audioPath} exceeds the 15MB limit`);
+  }
+  return buffer;
+}
+
+/**
+ * Append a file part named after its detected format (image, then audio).
+ * Unrecognized bytes keep the historical `image.jpg` name and `image/jpeg`
+ * type: form-data, before 2026-11-22, derived the type from that filename.
+ */
+function appendFile(formData: FormData, key: string, buffer: Buffer): void {
+  const type = detectImageType(buffer) ?? detectAudioType(buffer);
+  const prefix = type?.mimeType.startsWith('audio/') ? 'audio' : 'image';
+  const blob = new Blob([new Uint8Array(buffer)], { type: type?.mimeType ?? 'image/jpeg' });
+  formData.append(key, blob, `${prefix}.${type?.extension ?? 'jpg'}`);
 }
 
 /**
@@ -326,8 +466,9 @@ interface FormDataParams {
 }
 
 /**
- * Create FormData for multipart/form-data requests.
- * Handles text fields, image files, and JSON objects.
+ * Create a native FormData for multipart/form-data requests.
+ * Handles text fields, image and audio files (Buffers), and JSON objects.
+ * Returned a `form-data` package instance before 2026-11-22.
  *
  * @param params - Parameters to add to FormData
  * @returns Populated FormData object
@@ -348,8 +489,8 @@ export function buildFormData(params: FormDataParams): FormData {
     }
 
     if (Buffer.isBuffer(value)) {
-      // Buffer: Append as file
-      formData.append(key, value, { filename: 'image.jpg' });
+      // Buffer: Append as file, named and typed after its magic bytes
+      appendFile(formData, key, value);
     } else if (typeof value === 'object' && !Array.isArray(value)) {
       // Object: Convert to JSON string
       formData.append(key, JSON.stringify(value));
@@ -357,7 +498,7 @@ export function buildFormData(params: FormDataParams): FormData {
       // Array: Append each item separately (for multiple images or style_codes)
       value.forEach((item) => {
         if (Buffer.isBuffer(item)) {
-          formData.append(key, item, { filename: 'image.jpg' });
+          appendFile(formData, key, item);
         } else {
           formData.append(key, String(item));
         }

@@ -5,8 +5,7 @@
  * image handling, FormData building, and data transformations.
  */
 import winston from 'winston';
-import FormData from 'form-data';
-import type { SpinnerObject } from './types/index.js';
+import type { SpinnerObject, ImageDimensions } from './types/index.js';
 declare const logger: winston.Logger;
 /**
  * Validate image URL for security.
@@ -41,6 +40,17 @@ export declare function validateImagePath(filepath: string): Promise<string>;
  */
 export declare function assertSquareImage(imageSource: string | Buffer): Promise<void>;
 /**
+ * Read an image's width and height from a file path or Buffer.
+ *
+ * @param imageSource - Path to an image file, or its bytes
+ * @returns `{ width, height }`
+ * @throws Error if the dimensions cannot be read
+ *
+ * @example
+ * const { width, height } = await getImageDimensions('./photo.png');
+ */
+export declare function getImageDimensions(imageSource: string | Buffer): Promise<ImageDimensions>;
+/**
  * Load image file as Buffer for multipart/form-data.
  * Validates file exists and is a valid image format.
  *
@@ -65,14 +75,75 @@ export declare function loadImageAsBuffer(imagePath: string): Promise<Buffer>;
  */
 export declare function downloadImageAsBuffer(imageUrl: string): Promise<Buffer>;
 /**
+ * Download a generated result into memory, with SSRF checks on the URL and
+ * every redirect. Unlike downloadImageAsBuffer it does not check the
+ * Content-Type (Ideogram's result URLs are trusted to serve what they name).
+ *
+ * @param url - HTTPS URL of the result
+ * @param options - `maxBytes` (default 200MB, for 8k transparent PNGs) and `timeoutMs` (default 60s)
+ */
+export declare function downloadBuffer(url: string, options?: {
+    maxBytes?: number;
+    timeoutMs?: number;
+}): Promise<Buffer>;
+/**
+ * Stream a generated result (a video, an SVG) to a file without holding it in
+ * memory, with SSRF checks on the URL and every redirect.
+ *
+ * @param url - HTTPS URL of the result
+ * @param outputPath - File to write (parent directories are created)
+ * @param options - `maxBytes` (default 2GB) and `timeoutMs` (default 5 minutes)
+ */
+export declare function downloadToFile(url: string, outputPath: string, options?: {
+    maxBytes?: number;
+    timeoutMs?: number;
+}): Promise<void>;
+/**
+ * Detect an image's format from its magic bytes.
+ * Used to give multipart file parts a filename and Content-Type that match
+ * their bytes. Returns null for anything that is not PNG, JPEG, WebP or GIF.
+ *
+ * @param buffer - Image bytes
+ * @returns `{ extension, mimeType }`, or null when the format is not recognized
+ *
+ * @example
+ * detectImageType(pngBuffer); // { extension: 'png', mimeType: 'image/png' }
+ */
+export declare function detectImageType(buffer: Buffer): {
+    extension: string;
+    mimeType: string;
+} | null;
+/**
+ * Detect an audio file's format from its magic bytes: WAV (`RIFF....WAVE`) or
+ * MP3 (an `ID3` tag, or an MPEG audio frame sync). Returns null otherwise.
+ * Video reference endpoints accept MP3 and WAV only.
+ *
+ * @example
+ * detectAudioType(wavBuffer); // { extension: 'wav', mimeType: 'audio/wav' }
+ */
+export declare function detectAudioType(buffer: Buffer): {
+    extension: string;
+    mimeType: string;
+} | null;
+/**
+ * Load an MP3 or WAV file for a video reference upload.
+ * Checks the magic bytes and the 15MB per-file limit both video models share.
+ * Duration limits (2-15s on MiniMax H3, 2-30s on Seedance 2.5) are enforced
+ * by the API, not here.
+ *
+ * @throws Error if the file is missing, empty, not MP3/WAV, or over 15MB
+ */
+export declare function loadAudioAsBuffer(audioPath: string): Promise<Buffer>;
+/**
  * FormData parameters type.
  */
 interface FormDataParams {
     [key: string]: unknown;
 }
 /**
- * Create FormData for multipart/form-data requests.
- * Handles text fields, image files, and JSON objects.
+ * Create a native FormData for multipart/form-data requests.
+ * Handles text fields, image and audio files (Buffers), and JSON objects.
+ * Returned a `form-data` package instance before 2026-11-22.
  *
  * @param params - Parameters to add to FormData
  * @returns Populated FormData object

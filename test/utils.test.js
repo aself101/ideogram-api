@@ -25,7 +25,7 @@ import {
 import { redactApiKey } from '../src/config.js';
 import { writeFileSync, unlinkSync, mkdirSync, rmdirSync, existsSync } from 'fs';
 import { join } from 'path';
-import FormData from 'form-data';
+// FormData is the global (native) class since form-data was removed 2026-11-22.
 
 // Test fixtures directory
 const TEST_DIR = join(process.cwd(), 'test-fixtures');
