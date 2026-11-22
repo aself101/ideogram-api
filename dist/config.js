@@ -26,11 +26,11 @@ const globalConfigPath = join(homedir(), '.ideogram', '.env');
 if (existsSync(globalConfigPath)) {
     dotenv.config({ path: globalConfigPath });
 }
-// Base API URL
+/** Base URL of the Ideogram API. */
 export const BASE_URL = 'https://api.ideogram.ai';
-// API Version
+/** Version segment of the v1 endpoint paths (v2 endpoints spell their own /v2/ prefix). */
 export const API_VERSION = 'v1';
-// Ideogram API endpoints
+/** Ideogram API endpoint paths, relative to BASE_URL. */
 export const ENDPOINTS = {
     GENERATE_V3: `/${API_VERSION}/ideogram-v3/generate`,
     EDIT_V3: `/${API_VERSION}/ideogram-v3/edit`,
@@ -58,7 +58,7 @@ export const ENDPOINTS = {
     VIDEO_SEEDANCE_25_REFERENCE: '/v2/video/generate/seedance-2-5-reference-to-video',
     GENERATIONS: '/v2/generations',
 };
-// Valid resolutions for Ideogram 3.0
+/** Valid resolutions for Ideogram 3.0. */
 export const RESOLUTIONS = [
     '512x1536', '576x1408', '576x1472', '576x1536',
     '640x1344', '640x1408', '640x1472', '640x1536',
@@ -77,18 +77,18 @@ export const RESOLUTIONS = [
     '1472x576', '1472x640', '1472x704',
     '1536x512', '1536x576', '1536x640',
 ];
-// Valid aspect ratios for Ideogram 3.0
+/** Valid aspect ratios for Ideogram 3.0. */
 export const ASPECT_RATIOS = [
     '1x3', '3x1', '1x2', '2x1', '9x16', '16x9', '10x16', '16x10',
     '2x3', '3x2', '3x4', '4x3', '4x5', '5x4', '1x1',
 ];
-// Rendering speeds
+/** Rendering speeds (v1; the v2 API uses the lowercase V4_RENDERING_SPEEDS). */
 export const RENDERING_SPEEDS = ['FLASH', 'TURBO', 'DEFAULT', 'QUALITY'];
-// Magic prompt options
+/** Magic prompt options (v1; the v2 API uses the lowercase V2_MAGIC_PROMPT_MODES). */
 export const MAGIC_PROMPT_OPTIONS = ['AUTO', 'ON', 'OFF'];
-// Style types
+/** Style types (v1). */
 export const STYLE_TYPES = ['AUTO', 'GENERAL', 'REALISTIC', 'DESIGN', 'FICTION'];
-// Style presets (52 total)
+/** Style presets (52 total). */
 export const STYLE_PRESETS = [
     '80S_ILLUSTRATION', '90S_NOSTALGIA', 'ABSTRACT_ORGANIC', 'ANALOG_NOSTALGIA',
     'ART_BRUT', 'ART_DECO', 'ART_POSTER', 'AURA', 'AVANT_GARDE', 'BAUHAUS',
@@ -104,18 +104,18 @@ export const STYLE_PRESETS = [
     'STYLIZED_RED', 'SURREAL_COLLAGE', 'TRAVEL_POSTER', 'VINTAGE_GEO',
     'VINTAGE_POSTER', 'WATERCOLOR', 'WEIRD', 'WOODBLOCK_PRINT',
 ];
-// Color palette preset names
+/** Color palette preset names (v1, uppercase; v2 uses V2_COLOR_PALETTE_PRESETS). */
 export const COLOR_PALETTE_PRESETS = [
     'EMBER', 'FRESH', 'JUNGLE', 'MAGIC', 'MELON', 'MOSAIC', 'PASTEL', 'ULTRAMARINE',
 ];
-// Describe model versions
+/** Model versions the describe endpoint accepts. */
 export const DESCRIBE_MODEL_VERSIONS = ['V_2', 'V_3'];
 // ==================== V2 (Ideogram 4.x / auto / SVG / video) ====================
 // Values from the v2 OpenAPI document (2026-11-08; re-read 2026-11-22 for 4.6,
 // SVG, video and the auto / precise-edit changes). The API client does NOT
 // reject values outside these lists (Ideogram validates server-side and may
 // add values); validateV2Params, which the CLI runs, does.
-// Ideogram 4.0 resolutions (ResolutionV4, 38 values)
+/** Ideogram 4.0 resolutions (ResolutionV4, 38 values); also the 4.5 presets. */
 export const V4_RESOLUTIONS = [
     '2048x2048', '1440x2880', '2880x1440', '1664x2496', '2496x1664', '1792x2240',
     '2240x1792', '1440x2560', '2560x1440', '1600x2560', '2560x1600', '1728x2304',
@@ -125,16 +125,22 @@ export const V4_RESOLUTIONS = [
     '800x1280', '1280x800', '720x1280', '1280x720', '720x1440', '1440x720',
     '512x1536', '1536x512',
 ];
-// Ideogram 4.0 aspect ratios (IdeogramV4AspectRatio)
+/** Ideogram 4.0 aspect ratios (IdeogramV4AspectRatio). */
 export const V4_ASPECT_RATIOS = [
     'auto', '1x4', '1x3', '1x2', '9x16', '10x16', '2x3', '3x4', '4x5', '1x1',
     '5x4', '4x3', '3x2', '16x10', '16x9', '2x1', '3x1', '4x1',
 ];
+/** Ideogram 4.0 rendering speeds (v2, lowercase). */
 export const V4_RENDERING_SPEEDS = ['turbo', 'default', 'quality'];
+/** Magic prompt modes on the v2 API (lowercase). */
 export const V2_MAGIC_PROMPT_MODES = ['auto', 'on', 'off'];
+/** Pixel-budget tiers for Ideogram 4.0 transparent generation; above 2k is upscaled. */
 export const V4_OUTPUT_RESOLUTIONS = ['1k', '2k', '4k', '8k'];
+/** Quality levels for Ideogram 4.5 / 4.6 generate and precise-edit. */
 export const V45_QUALITIES = ['very_low', 'low', 'medium', 'high'];
+/** Background modes for Ideogram 4.5 / 4.6 generate. */
 export const V45_BACKGROUNDS = ['auto', 'transparent', 'opaque'];
+/** Resolution tiers for automatic model selection (generate-auto). */
 export const AUTO_RESOLUTION_TIERS = ['1k', '2k', '4k'];
 /** Ideogram 4.6 named sizes (besides an exact 'WIDTHxHEIGHT'). 4.5 has only 'auto' and 'source'. */
 export const V46_SIZES = ['auto', 'auto_2k', 'auto_4k', 'source'];
@@ -146,13 +152,21 @@ export const AUTO_STYLE_TYPES = [
 export const V2_COLOR_PALETTE_PRESETS = [
     'ember', 'fresh', 'jungle', 'magic', 'melon', 'mosaic', 'pastel', 'ultramarine',
 ];
+/** Quality levels for SVG generation (Ideogram Vector 1). */
 export const SVG_QUALITIES = ['low', 'medium', 'high'];
+/** Enlargement factors the v2 upscaler accepts. */
 export const UPSCALE_FACTORS = ['x2', 'x4', 'x8'];
+/** Types of an existing Ideogram asset used as a source (TYPE:ID[:COLLECTION]). */
 export const ASSET_TYPES = ['ASSET', 'CANVAS_ASSET', 'LAYERED_ASSET', 'RESPONSE', 'UPLOAD'];
+/** Aspect ratios for MiniMax H3 video. */
 export const MINIMAX_H3_ASPECT_RATIOS = ['21x9', '16x9', '4x3', '1x1', '3x4', '9x16'];
+/** Resolution tiers for MiniMax H3 video. */
 export const MINIMAX_H3_RESOLUTIONS = ['480P', '768P', '2K', '4K'];
+/** Prompt expansion modes for MiniMax H3 video. */
 export const MINIMAX_H3_PROMPT_EXPANSION_MODES = ['disabled', 'fast', 'balanced', 'quality'];
+/** Aspect ratios for Seedance 2.5 video. */
 export const SEEDANCE_25_ASPECT_RATIOS = ['auto', '21x9', '16x9', '4x3', '1x1', '3x4', '9x16'];
+/** Resolution tiers for Seedance 2.5 video. */
 export const SEEDANCE_25_RESOLUTIONS = ['480p', '720p', '1080p'];
 const MiB = 1024 * 1024;
 /** Documented v2 limits (counts in files, sizes in bytes, areas in pixels). */
@@ -604,7 +618,7 @@ export function validateV2Params(operation, params) {
             throw new Error(`Unknown v2 operation: ${operation}`);
     }
 }
-// Model operation constraints
+/** Per-operation constraints for the v1 models, read by validateOperationParams. */
 export const OPERATION_CONSTRAINTS = {
     'generate-v3': {
         prompt: { required: true, maxLength: 10000 },
@@ -659,7 +673,7 @@ export const OPERATION_CONSTRAINTS = {
         describeModelVersion: { options: DESCRIBE_MODEL_VERSIONS },
     },
 };
-// Default output directory (can be overridden via environment variable)
+/** Default output directory (can be overridden via the IDEOGRAM_OUTPUT_DIR environment variable). */
 export const DEFAULT_OUTPUT_DIR = process.env.IDEOGRAM_OUTPUT_DIR || 'datasets/ideogram';
 /**
  * Retrieve Ideogram API key from environment variables or CLI flag.

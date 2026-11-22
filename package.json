@@ -35,6 +35,7 @@
     "build": "tsc",
     "dev": "tsx src/cli.ts",
     "test": "vitest run",
+    "verify": "tsc --noEmit && vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",

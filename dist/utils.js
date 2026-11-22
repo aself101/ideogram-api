@@ -227,8 +227,8 @@ export async function assertSquareImage(imageSource) {
 export async function getImageDimensions(imageSource) {
     try {
         if (Buffer.isBuffer(imageSource) || ArrayBuffer.isView(imageSource)) {
-            // Accept Buffer/Uint8Array inputs directly
-            const result = imageSize(imageSource);
+            // Accept Buffer/Uint8Array inputs: view the same bytes (no copy) as a plain Uint8Array
+            const result = imageSize(new Uint8Array(imageSource.buffer, imageSource.byteOffset, imageSource.byteLength));
             if (!result.width || !result.height) {
                 throw new Error('Could not determine image dimensions (input: Buffer)');
             }

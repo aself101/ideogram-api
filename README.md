@@ -1507,6 +1507,7 @@ npm run ideogram:describe
 ### Testing Commands
 
 ```bash
+npm run verify        # Type-check, then run the tests (the pre-merge gate)
 npm test              # Run tests once
 npm run test:watch    # Run tests in watch mode
 npm run test:ui       # Open Vitest UI

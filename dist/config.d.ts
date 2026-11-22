@@ -15,8 +15,11 @@
  * 3. Generate a new API key from the API dashboard
  */
 import type { OperationConstraints, ValidationParams, V2ColorPalette, V2OperationKey } from './types/index.js';
+/** Base URL of the Ideogram API. */
 export declare const BASE_URL = "https://api.ideogram.ai";
+/** Version segment of the v1 endpoint paths (v2 endpoints spell their own /v2/ prefix). */
 export declare const API_VERSION = "v1";
+/** Ideogram API endpoint paths, relative to BASE_URL. */
 export declare const ENDPOINTS: {
     readonly GENERATE_V3: "/v1/ideogram-v3/generate";
     readonly EDIT_V3: "/v1/ideogram-v3/edit";
@@ -42,21 +45,37 @@ export declare const ENDPOINTS: {
     readonly VIDEO_SEEDANCE_25_REFERENCE: "/v2/video/generate/seedance-2-5-reference-to-video";
     readonly GENERATIONS: "/v2/generations";
 };
+/** Valid resolutions for Ideogram 3.0. */
 export declare const RESOLUTIONS: readonly ["512x1536", "576x1408", "576x1472", "576x1536", "640x1344", "640x1408", "640x1472", "640x1536", "704x1152", "704x1216", "704x1280", "704x1344", "704x1408", "704x1472", "736x1312", "768x1088", "768x1216", "768x1280", "768x1344", "800x1280", "832x960", "832x1024", "832x1088", "832x1152", "832x1216", "832x1248", "864x1152", "896x960", "896x1024", "896x1088", "896x1120", "896x1152", "960x832", "960x896", "960x1024", "960x1088", "1024x832", "1024x896", "1024x960", "1024x1024", "1088x768", "1088x832", "1088x896", "1088x960", "1120x896", "1152x704", "1152x832", "1152x864", "1152x896", "1216x704", "1216x768", "1216x832", "1248x832", "1280x704", "1280x768", "1280x800", "1312x736", "1344x640", "1344x704", "1344x768", "1408x576", "1408x640", "1408x704", "1472x576", "1472x640", "1472x704", "1536x512", "1536x576", "1536x640"];
+/** Valid aspect ratios for Ideogram 3.0. */
 export declare const ASPECT_RATIOS: readonly ["1x3", "3x1", "1x2", "2x1", "9x16", "16x9", "10x16", "16x10", "2x3", "3x2", "3x4", "4x3", "4x5", "5x4", "1x1"];
+/** Rendering speeds (v1; the v2 API uses the lowercase V4_RENDERING_SPEEDS). */
 export declare const RENDERING_SPEEDS: readonly ["FLASH", "TURBO", "DEFAULT", "QUALITY"];
+/** Magic prompt options (v1; the v2 API uses the lowercase V2_MAGIC_PROMPT_MODES). */
 export declare const MAGIC_PROMPT_OPTIONS: readonly ["AUTO", "ON", "OFF"];
+/** Style types (v1). */
 export declare const STYLE_TYPES: readonly ["AUTO", "GENERAL", "REALISTIC", "DESIGN", "FICTION"];
+/** Style presets (52 total). */
 export declare const STYLE_PRESETS: readonly ["80S_ILLUSTRATION", "90S_NOSTALGIA", "ABSTRACT_ORGANIC", "ANALOG_NOSTALGIA", "ART_BRUT", "ART_DECO", "ART_POSTER", "AURA", "AVANT_GARDE", "BAUHAUS", "BLUEPRINT", "BLURRY_MOTION", "BRIGHT_ART", "C4D_CARTOON", "CHILDRENS_BOOK", "COLLAGE", "COLORING_BOOK_I", "COLORING_BOOK_II", "CUBISM", "DARK_AURA", "DOODLE", "DOUBLE_EXPOSURE", "DRAMATIC_CINEMA", "EDITORIAL", "EMOTIONAL_MINIMAL", "ETHEREAL_PARTY", "EXPIRED_FILM", "FLAT_ART", "FLAT_VECTOR", "FOREST_REVERIE", "GEO_MINIMALIST", "GLASS_PRISM", "GOLDEN_HOUR", "GRAFFITI_I", "GRAFFITI_II", "HALFTONE_PRINT", "HIGH_CONTRAST", "HIPPIE_ERA", "ICONIC", "JAPANDI_FUSION", "JAZZY", "LONG_EXPOSURE", "MAGAZINE_EDITORIAL", "MINIMAL_ILLUSTRATION", "MIXED_MEDIA", "MONOCHROME", "NIGHTLIFE", "OIL_PAINTING", "OLD_CARTOONS", "PAINT_GESTURE", "POP_ART", "RETRO_ETCHING", "RIVIERA_POP", "SPOTLIGHT_80S", "STYLIZED_RED", "SURREAL_COLLAGE", "TRAVEL_POSTER", "VINTAGE_GEO", "VINTAGE_POSTER", "WATERCOLOR", "WEIRD", "WOODBLOCK_PRINT"];
+/** Color palette preset names (v1, uppercase; v2 uses V2_COLOR_PALETTE_PRESETS). */
 export declare const COLOR_PALETTE_PRESETS: readonly ["EMBER", "FRESH", "JUNGLE", "MAGIC", "MELON", "MOSAIC", "PASTEL", "ULTRAMARINE"];
+/** Model versions the describe endpoint accepts. */
 export declare const DESCRIBE_MODEL_VERSIONS: readonly ["V_2", "V_3"];
+/** Ideogram 4.0 resolutions (ResolutionV4, 38 values); also the 4.5 presets. */
 export declare const V4_RESOLUTIONS: readonly ["2048x2048", "1440x2880", "2880x1440", "1664x2496", "2496x1664", "1792x2240", "2240x1792", "1440x2560", "2560x1440", "1600x2560", "2560x1600", "1728x2304", "2304x1728", "1296x3168", "3168x1296", "1152x2944", "2944x1152", "1248x3328", "3328x1248", "1280x3072", "3072x1280", "1024x3072", "3072x1024", "1024x1024", "896x1120", "1120x896", "864x1152", "1152x864", "832x1248", "1248x832", "800x1280", "1280x800", "720x1280", "1280x720", "720x1440", "1440x720", "512x1536", "1536x512"];
+/** Ideogram 4.0 aspect ratios (IdeogramV4AspectRatio). */
 export declare const V4_ASPECT_RATIOS: readonly ["auto", "1x4", "1x3", "1x2", "9x16", "10x16", "2x3", "3x4", "4x5", "1x1", "5x4", "4x3", "3x2", "16x10", "16x9", "2x1", "3x1", "4x1"];
+/** Ideogram 4.0 rendering speeds (v2, lowercase). */
 export declare const V4_RENDERING_SPEEDS: readonly ["turbo", "default", "quality"];
+/** Magic prompt modes on the v2 API (lowercase). */
 export declare const V2_MAGIC_PROMPT_MODES: readonly ["auto", "on", "off"];
+/** Pixel-budget tiers for Ideogram 4.0 transparent generation; above 2k is upscaled. */
 export declare const V4_OUTPUT_RESOLUTIONS: readonly ["1k", "2k", "4k", "8k"];
+/** Quality levels for Ideogram 4.5 / 4.6 generate and precise-edit. */
 export declare const V45_QUALITIES: readonly ["very_low", "low", "medium", "high"];
+/** Background modes for Ideogram 4.5 / 4.6 generate. */
 export declare const V45_BACKGROUNDS: readonly ["auto", "transparent", "opaque"];
+/** Resolution tiers for automatic model selection (generate-auto). */
 export declare const AUTO_RESOLUTION_TIERS: readonly ["1k", "2k", "4k"];
 /** Ideogram 4.6 named sizes (besides an exact 'WIDTHxHEIGHT'). 4.5 has only 'auto' and 'source'. */
 export declare const V46_SIZES: readonly ["auto", "auto_2k", "auto_4k", "source"];
@@ -64,13 +83,21 @@ export declare const V46_SIZES: readonly ["auto", "auto_2k", "auto_4k", "source"
 export declare const AUTO_STYLE_TYPES: readonly ["auto", "general", "realistic", "design", "custom", "fiction", "stylized"];
 /** v2 color palette preset names (lowercase; v3's are uppercase). */
 export declare const V2_COLOR_PALETTE_PRESETS: readonly ["ember", "fresh", "jungle", "magic", "melon", "mosaic", "pastel", "ultramarine"];
+/** Quality levels for SVG generation (Ideogram Vector 1). */
 export declare const SVG_QUALITIES: readonly ["low", "medium", "high"];
+/** Enlargement factors the v2 upscaler accepts. */
 export declare const UPSCALE_FACTORS: readonly ["x2", "x4", "x8"];
+/** Types of an existing Ideogram asset used as a source (TYPE:ID[:COLLECTION]). */
 export declare const ASSET_TYPES: readonly ["ASSET", "CANVAS_ASSET", "LAYERED_ASSET", "RESPONSE", "UPLOAD"];
+/** Aspect ratios for MiniMax H3 video. */
 export declare const MINIMAX_H3_ASPECT_RATIOS: readonly ["21x9", "16x9", "4x3", "1x1", "3x4", "9x16"];
+/** Resolution tiers for MiniMax H3 video. */
 export declare const MINIMAX_H3_RESOLUTIONS: readonly ["480P", "768P", "2K", "4K"];
+/** Prompt expansion modes for MiniMax H3 video. */
 export declare const MINIMAX_H3_PROMPT_EXPANSION_MODES: readonly ["disabled", "fast", "balanced", "quality"];
+/** Aspect ratios for Seedance 2.5 video. */
 export declare const SEEDANCE_25_ASPECT_RATIOS: readonly ["auto", "21x9", "16x9", "4x3", "1x1", "3x4", "9x16"];
+/** Resolution tiers for Seedance 2.5 video. */
 export declare const SEEDANCE_25_RESOLUTIONS: readonly ["480p", "720p", "1080p"];
 /** Documented v2 limits (counts in files, sizes in bytes, areas in pixels). */
 export declare const V2_LIMITS: {
@@ -241,7 +268,9 @@ export declare function assertColorPalette(palette: unknown): asserts palette is
  * @throws Error describing the first violated rule
  */
 export declare function validateV2Params(operation: V2OperationKey, params: V2ValidationParams): void;
+/** Per-operation constraints for the v1 models, read by validateOperationParams. */
 export declare const OPERATION_CONSTRAINTS: OperationConstraints;
+/** Default output directory (can be overridden via the IDEOGRAM_OUTPUT_DIR environment variable). */
 export declare const DEFAULT_OUTPUT_DIR: string;
 /**
  * Retrieve Ideogram API key from environment variables or CLI flag.

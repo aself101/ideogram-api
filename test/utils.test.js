@@ -23,12 +23,14 @@ import {
   assertSquareImage
 } from '../src/utils.js';
 import { redactApiKey } from '../src/config.js';
-import { writeFileSync, unlinkSync, mkdirSync, rmdirSync, existsSync } from 'fs';
+import { writeFileSync, unlinkSync, rmdirSync, existsSync, mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
+import { tmpdir } from 'os';
 // FormData is the global (native) class since form-data was removed 2026-11-22.
 
 // Test fixtures directory
-const TEST_DIR = join(process.cwd(), 'test-fixtures');
+// Per-file temp dir (never inside the package dir; removed in afterAll)
+let TEST_DIR;
 const squareBmpBuffer = createBmpBuffer(4, 4);
 const rectangleBmpBuffer = createBmpBuffer(4, 2);
 
@@ -77,35 +79,20 @@ function createBmpBuffer(width, height) {
 
 describe('Utility Functions', () => {
   beforeAll(() => {
-    // Create test directory
-    if (!existsSync(TEST_DIR)) {
-      mkdirSync(TEST_DIR, { recursive: true });
-    }
+    // Per-file temp dir plus every fixture the sibling describes read, created
+    // here so they exist whatever order (shuffle) the describes run in.
+    TEST_DIR = mkdtempSync(join(tmpdir(), 'ideogram-utils-'));
+    const pngMagicBytes = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+    const jpegMagicBytes = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0]);
+    writeFileSync(join(TEST_DIR, 'test-image.png'), pngMagicBytes);
+    writeFileSync(join(TEST_DIR, 'test-image.jpg'), jpegMagicBytes);
+    writeFileSync(join(TEST_DIR, 'invalid.txt'), 'not an image');
+    writeFileSync(join(TEST_DIR, 'square.bmp'), squareBmpBuffer);
+    writeFileSync(join(TEST_DIR, 'rectangle.bmp'), rectangleBmpBuffer);
   });
 
   afterAll(() => {
-    // Clean up test directory
-    try {
-      if (existsSync(TEST_DIR)) {
-        const files = [
-          'test-image.jpg',
-          'test-image.png',
-          'test-metadata.json',
-          'invalid.txt',
-          'square.bmp',
-          'rectangle.bmp'
-        ];
-        files.forEach(file => {
-          const filepath = join(TEST_DIR, file);
-          if (existsSync(filepath)) {
-            unlinkSync(filepath);
-          }
-        });
-        rmdirSync(TEST_DIR);
-      }
-    } catch (error) {
-      // Ignore cleanup errors
-    }
+    if (TEST_DIR) rmSync(TEST_DIR, { recursive: true, force: true });
   });
 
   describe('generateFilename', () => {
@@ -299,18 +286,6 @@ describe('Utility Functions', () => {
     });
 
     describe('validateImagePath', () => {
-      beforeAll(() => {
-        // Create valid test images with magic bytes
-        const pngMagicBytes = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
-        const jpegMagicBytes = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0]);
-
-        writeFileSync(join(TEST_DIR, 'test-image.png'), pngMagicBytes);
-        writeFileSync(join(TEST_DIR, 'test-image.jpg'), jpegMagicBytes);
-        writeFileSync(join(TEST_DIR, 'invalid.txt'), 'not an image');
-        writeFileSync(join(TEST_DIR, 'square.bmp'), squareBmpBuffer);
-        writeFileSync(join(TEST_DIR, 'rectangle.bmp'), rectangleBmpBuffer);
-      });
-
       it('should accept valid PNG files', async () => {
         const filepath = join(TEST_DIR, 'test-image.png');
         await expect(validateImagePath(filepath)).resolves.toBe(filepath);
