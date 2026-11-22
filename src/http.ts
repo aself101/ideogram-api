@@ -20,11 +20,10 @@
  */
 
 import { createWriteStream } from 'fs';
-import { mkdir } from 'fs/promises';
+import { mkdir, unlink } from 'fs/promises';
 import { dirname } from 'path';
 import { Readable, Transform } from 'stream';
 import { pipeline } from 'stream/promises';
-import type { ReadableStream as WebReadableStream } from 'stream/web';
 
 const MB = 1024 * 1024;
 
@@ -97,16 +96,24 @@ export async function readBodyWithLimit(response: Response, maxBytes: number): P
   return Buffer.concat(chunks);
 }
 
-/** Stream a response body to a file, failing (and leaving a partial file) past `maxBytes`. */
+/**
+ * Stream a response body to a file, failing past `maxBytes`. On any failure
+ * (size cap exceeded, stream error, write error) the partial file is removed
+ * (best effort) and the original error is rethrown. A declared Content-Length
+ * over the cap fails before the file is created.
+ */
 export async function streamToFile(response: Response, outputPath: string, maxBytes: number): Promise<void> {
   checkDeclaredLength(response, maxBytes);
-  if (!response.body) throw new Error('Response has no body');
-  await mkdir(dirname(outputPath), { recursive: true });
-  await pipeline(
-    Readable.fromWeb(response.body as unknown as WebReadableStream<Uint8Array>),
-    byteLimit(maxBytes),
-    createWriteStream(outputPath)
-  );
+  if (!response.body) {
+    throw new Error(`Response has no body (HTTP ${response.status}) to write to ${outputPath}`);
+  }
+  try {
+    await mkdir(dirname(outputPath), { recursive: true });
+    await pipeline(Readable.fromWeb(response.body), byteLimit(maxBytes), createWriteStream(outputPath));
+  } catch (error) {
+    await unlink(outputPath).catch(() => undefined);
+    throw error;
+  }
 }
 
 /** Options for fetchFollowingRedirects. */

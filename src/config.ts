@@ -23,6 +23,7 @@ import type {
   OperationConstraints,
   OperationKey,
   ValidationParams,
+  V2ColorPalette,
   V2OperationKey,
 } from './types/index.js';
 
@@ -72,7 +73,7 @@ export const ENDPOINTS = {
 } as const;
 
 // Valid resolutions for Ideogram 3.0
-export const RESOLUTIONS: readonly string[] = [
+export const RESOLUTIONS = [
   '512x1536', '576x1408', '576x1472', '576x1536',
   '640x1344', '640x1408', '640x1472', '640x1536',
   '704x1152', '704x1216', '704x1280', '704x1344', '704x1408', '704x1472',
@@ -89,25 +90,25 @@ export const RESOLUTIONS: readonly string[] = [
   '1408x576', '1408x640', '1408x704',
   '1472x576', '1472x640', '1472x704',
   '1536x512', '1536x576', '1536x640',
-];
+] as const;
 
 // Valid aspect ratios for Ideogram 3.0
-export const ASPECT_RATIOS: readonly string[] = [
+export const ASPECT_RATIOS = [
   '1x3', '3x1', '1x2', '2x1', '9x16', '16x9', '10x16', '16x10',
   '2x3', '3x2', '3x4', '4x3', '4x5', '5x4', '1x1',
-];
+] as const;
 
 // Rendering speeds
-export const RENDERING_SPEEDS: readonly string[] = ['FLASH', 'TURBO', 'DEFAULT', 'QUALITY'];
+export const RENDERING_SPEEDS = ['FLASH', 'TURBO', 'DEFAULT', 'QUALITY'] as const;
 
 // Magic prompt options
-export const MAGIC_PROMPT_OPTIONS: readonly string[] = ['AUTO', 'ON', 'OFF'];
+export const MAGIC_PROMPT_OPTIONS = ['AUTO', 'ON', 'OFF'] as const;
 
 // Style types
-export const STYLE_TYPES: readonly string[] = ['AUTO', 'GENERAL', 'REALISTIC', 'DESIGN', 'FICTION'];
+export const STYLE_TYPES = ['AUTO', 'GENERAL', 'REALISTIC', 'DESIGN', 'FICTION'] as const;
 
 // Style presets (52 total)
-export const STYLE_PRESETS: readonly string[] = [
+export const STYLE_PRESETS = [
   '80S_ILLUSTRATION', '90S_NOSTALGIA', 'ABSTRACT_ORGANIC', 'ANALOG_NOSTALGIA',
   'ART_BRUT', 'ART_DECO', 'ART_POSTER', 'AURA', 'AVANT_GARDE', 'BAUHAUS',
   'BLUEPRINT', 'BLURRY_MOTION', 'BRIGHT_ART', 'C4D_CARTOON', 'CHILDRENS_BOOK',
@@ -121,15 +122,15 @@ export const STYLE_PRESETS: readonly string[] = [
   'PAINT_GESTURE', 'POP_ART', 'RETRO_ETCHING', 'RIVIERA_POP', 'SPOTLIGHT_80S',
   'STYLIZED_RED', 'SURREAL_COLLAGE', 'TRAVEL_POSTER', 'VINTAGE_GEO',
   'VINTAGE_POSTER', 'WATERCOLOR', 'WEIRD', 'WOODBLOCK_PRINT',
-];
+] as const;
 
 // Color palette preset names
-export const COLOR_PALETTE_PRESETS: readonly string[] = [
+export const COLOR_PALETTE_PRESETS = [
   'EMBER', 'FRESH', 'JUNGLE', 'MAGIC', 'MELON', 'MOSAIC', 'PASTEL', 'ULTRAMARINE',
-];
+] as const;
 
 // Describe model versions
-export const DESCRIBE_MODEL_VERSIONS: readonly string[] = ['V_2', 'V_3'];
+export const DESCRIBE_MODEL_VERSIONS = ['V_2', 'V_3'] as const;
 
 // ==================== V2 (Ideogram 4.x / auto / SVG / video) ====================
 // Values from the v2 OpenAPI document (2026-11-08; re-read 2026-11-22 for 4.6,
@@ -138,7 +139,7 @@ export const DESCRIBE_MODEL_VERSIONS: readonly string[] = ['V_2', 'V_3'];
 // add values); validateV2Params, which the CLI runs, does.
 
 // Ideogram 4.0 resolutions (ResolutionV4, 38 values)
-export const V4_RESOLUTIONS: readonly string[] = [
+export const V4_RESOLUTIONS = [
   '2048x2048', '1440x2880', '2880x1440', '1664x2496', '2496x1664', '1792x2240',
   '2240x1792', '1440x2560', '2560x1440', '1600x2560', '2560x1600', '1728x2304',
   '2304x1728', '1296x3168', '3168x1296', '1152x2944', '2944x1152', '1248x3328',
@@ -146,43 +147,43 @@ export const V4_RESOLUTIONS: readonly string[] = [
   '896x1120', '1120x896', '864x1152', '1152x864', '832x1248', '1248x832',
   '800x1280', '1280x800', '720x1280', '1280x720', '720x1440', '1440x720',
   '512x1536', '1536x512',
-];
+] as const;
 
 // Ideogram 4.0 aspect ratios (IdeogramV4AspectRatio)
-export const V4_ASPECT_RATIOS: readonly string[] = [
+export const V4_ASPECT_RATIOS = [
   'auto', '1x4', '1x3', '1x2', '9x16', '10x16', '2x3', '3x4', '4x5', '1x1',
   '5x4', '4x3', '3x2', '16x10', '16x9', '2x1', '3x1', '4x1',
-];
+] as const;
 
-export const V4_RENDERING_SPEEDS: readonly string[] = ['turbo', 'default', 'quality'];
-export const V2_MAGIC_PROMPT_MODES: readonly string[] = ['auto', 'on', 'off'];
-export const V4_OUTPUT_RESOLUTIONS: readonly string[] = ['1k', '2k', '4k', '8k'];
-export const V45_QUALITIES: readonly string[] = ['very_low', 'low', 'medium', 'high'];
-export const V45_BACKGROUNDS: readonly string[] = ['auto', 'transparent', 'opaque'];
-export const AUTO_RESOLUTION_TIERS: readonly string[] = ['1k', '2k', '4k'];
+export const V4_RENDERING_SPEEDS = ['turbo', 'default', 'quality'] as const;
+export const V2_MAGIC_PROMPT_MODES = ['auto', 'on', 'off'] as const;
+export const V4_OUTPUT_RESOLUTIONS = ['1k', '2k', '4k', '8k'] as const;
+export const V45_QUALITIES = ['very_low', 'low', 'medium', 'high'] as const;
+export const V45_BACKGROUNDS = ['auto', 'transparent', 'opaque'] as const;
+export const AUTO_RESOLUTION_TIERS = ['1k', '2k', '4k'] as const;
 
 /** Ideogram 4.6 named sizes (besides an exact 'WIDTHxHEIGHT'). 4.5 has only 'auto' and 'source'. */
-export const V46_SIZES: readonly string[] = ['auto', 'auto_2k', 'auto_4k', 'source'];
+export const V46_SIZES = ['auto', 'auto_2k', 'auto_4k', 'source'] as const;
 
 /** Style types for automatic model selection (IdeogramV3StyleType, lowercase on v2). */
-export const AUTO_STYLE_TYPES: readonly string[] = [
+export const AUTO_STYLE_TYPES = [
   'auto', 'general', 'realistic', 'design', 'custom', 'fiction', 'stylized',
-];
+] as const;
 
 /** v2 color palette preset names (lowercase; v3's are uppercase). */
-export const V2_COLOR_PALETTE_PRESETS: readonly string[] = [
+export const V2_COLOR_PALETTE_PRESETS = [
   'ember', 'fresh', 'jungle', 'magic', 'melon', 'mosaic', 'pastel', 'ultramarine',
-];
+] as const;
 
-export const SVG_QUALITIES: readonly string[] = ['low', 'medium', 'high'];
-export const UPSCALE_FACTORS: readonly string[] = ['x2', 'x4', 'x8'];
-export const ASSET_TYPES: readonly string[] = ['ASSET', 'CANVAS_ASSET', 'LAYERED_ASSET', 'RESPONSE', 'UPLOAD'];
+export const SVG_QUALITIES = ['low', 'medium', 'high'] as const;
+export const UPSCALE_FACTORS = ['x2', 'x4', 'x8'] as const;
+export const ASSET_TYPES = ['ASSET', 'CANVAS_ASSET', 'LAYERED_ASSET', 'RESPONSE', 'UPLOAD'] as const;
 
-export const MINIMAX_H3_ASPECT_RATIOS: readonly string[] = ['21x9', '16x9', '4x3', '1x1', '3x4', '9x16'];
-export const MINIMAX_H3_RESOLUTIONS: readonly string[] = ['480P', '768P', '2K', '4K'];
-export const MINIMAX_H3_PROMPT_EXPANSION_MODES: readonly string[] = ['disabled', 'fast', 'balanced', 'quality'];
-export const SEEDANCE_25_ASPECT_RATIOS: readonly string[] = ['auto', '21x9', '16x9', '4x3', '1x1', '3x4', '9x16'];
-export const SEEDANCE_25_RESOLUTIONS: readonly string[] = ['480p', '720p', '1080p'];
+export const MINIMAX_H3_ASPECT_RATIOS = ['21x9', '16x9', '4x3', '1x1', '3x4', '9x16'] as const;
+export const MINIMAX_H3_RESOLUTIONS = ['480P', '768P', '2K', '4K'] as const;
+export const MINIMAX_H3_PROMPT_EXPANSION_MODES = ['disabled', 'fast', 'balanced', 'quality'] as const;
+export const SEEDANCE_25_ASPECT_RATIOS = ['auto', '21x9', '16x9', '4x3', '1x1', '3x4', '9x16'] as const;
+export const SEEDANCE_25_RESOLUTIONS = ['480p', '720p', '1080p'] as const;
 
 const MiB = 1024 * 1024;
 
@@ -288,8 +289,13 @@ export interface V2ValidationParams {
   promptExpansionMode?: string;
 }
 
+/** Membership test for a literal tuple: `list.includes(x)` rejects a plain string argument. */
+export function isOneOf(list: readonly string[], value: string): boolean {
+  return list.includes(value);
+}
+
 function checkEnum(name: string, value: string | undefined, allowed: readonly string[]): void {
-  if (value !== undefined && !allowed.includes(value)) {
+  if (value !== undefined && !isOneOf(allowed, value)) {
     throw new Error(`Invalid ${name} '${value}'. Must be one of: ${allowed.join(', ')}`);
   }
 }
@@ -409,9 +415,19 @@ function checkExactSize(size: string, bounds: PixelBounds, allowed: string): voi
   if (Math.max(w / h, h / w) > L.maxAspect) throw new Error('size aspect ratio must be at most 6:1');
 }
 
-/** A v2 color palette: a preset name, `{ name }`, or `{ members: [{ color_hex, color_weight? }] }`. */
+/** Validate an optional v2 color palette (undefined passes). */
 function checkColorPalette(palette: unknown): void {
   if (palette === undefined) return;
+  assertColorPalette(palette);
+}
+
+/**
+ * Assert that a value is a v2 color palette: a preset name, `{ name }`, or
+ * `{ members: [{ color_hex, color_weight? }] }`.
+ *
+ * @throws Error describing the first violated rule
+ */
+export function assertColorPalette(palette: unknown): asserts palette is V2ColorPalette {
   if (typeof palette === 'string') {
     checkEnum('color palette preset', palette, V2_COLOR_PALETTE_PRESETS);
     return;
@@ -447,6 +463,13 @@ function checkColorPalette(palette: unknown): void {
  * Validate parameters for a v2 operation against the documented rules.
  * Catches mistakes before a request is sent; the CLI runs it on every v2 command.
  * The API client does not call it, so library callers opt in.
+ *
+ * @example
+ * ```ts
+ * validateV2Params('generate-v46', { prompt: 'a lighthouse at dusk', size: 'auto' }); // valid: returns undefined
+ * validateV2Params('generate-v46', { prompt: 'a lighthouse at dusk', quality: 'best' });
+ * // throws: Invalid quality 'best'. Must be one of: very_low, low, medium, high
+ * ```
  *
  * @throws Error describing the first violated rule
  */
@@ -525,7 +548,7 @@ export function validateV2Params(operation: V2OperationKey, params: V2Validation
           if (count === 0) throw new Error("size 'source' requires source images");
         } else {
           checkExactSize(params.size, { maxPixels: L.maxEditPixels }, "'auto', 'source'");
-          if (count === 0 && !V4_RESOLUTIONS.includes(params.size)) {
+          if (count === 0 && !isOneOf(V4_RESOLUTIONS, params.size)) {
             throw new Error(
               `Without source images, an exact size must be a supported preset (see V4_RESOLUTIONS)`
             );
@@ -680,55 +703,55 @@ export function validateV2Params(operation: V2OperationKey, params: V2Validation
 export const OPERATION_CONSTRAINTS: OperationConstraints = {
   'generate-v3': {
     prompt: { required: true, maxLength: 10000 },
-    resolution: { options: RESOLUTIONS as unknown as string[] },
-    aspectRatio: { options: ASPECT_RATIOS as unknown as string[] },
-    renderingSpeed: { options: RENDERING_SPEEDS as unknown as string[], default: 'DEFAULT' },
-    magicPrompt: { options: MAGIC_PROMPT_OPTIONS as unknown as string[], default: 'AUTO' },
+    resolution: { options: RESOLUTIONS },
+    aspectRatio: { options: ASPECT_RATIOS },
+    renderingSpeed: { options: RENDERING_SPEEDS, default: 'DEFAULT' },
+    magicPrompt: { options: MAGIC_PROMPT_OPTIONS, default: 'AUTO' },
     numImages: { min: 1, max: 8, default: 1 },
-    styleType: { options: STYLE_TYPES as unknown as string[] },
-    stylePreset: { options: STYLE_PRESETS as unknown as string[] },
-    colorPalette: { presets: COLOR_PALETTE_PRESETS as unknown as string[] },
+    styleType: { options: STYLE_TYPES },
+    stylePreset: { options: STYLE_PRESETS },
+    colorPalette: { presets: COLOR_PALETTE_PRESETS },
   },
   'edit-v3': {
     prompt: { required: true, maxLength: 10000 },
     image: { required: true, formats: ['JPEG', 'PNG', 'WebP', 'GIF'] },
     mask: { required: true, formats: ['JPEG', 'PNG', 'WebP', 'GIF'] },
-    magicPrompt: { options: MAGIC_PROMPT_OPTIONS as unknown as string[], default: 'AUTO' },
+    magicPrompt: { options: MAGIC_PROMPT_OPTIONS, default: 'AUTO' },
     numImages: { min: 1, max: 8, default: 1 },
-    renderingSpeed: { options: RENDERING_SPEEDS as unknown as string[], default: 'DEFAULT' },
-    styleType: { options: STYLE_TYPES as unknown as string[] },
-    stylePreset: { options: STYLE_PRESETS as unknown as string[] },
+    renderingSpeed: { options: RENDERING_SPEEDS, default: 'DEFAULT' },
+    styleType: { options: STYLE_TYPES },
+    stylePreset: { options: STYLE_PRESETS },
   },
   'remix-v3': {
     prompt: { required: true, maxLength: 10000 },
     image: { required: true, formats: ['JPEG', 'PNG', 'WebP', 'GIF'] },
     imageWeight: { min: 0, max: 100 },
-    resolution: { options: RESOLUTIONS as unknown as string[] },
-    aspectRatio: { options: ASPECT_RATIOS as unknown as string[] },
-    renderingSpeed: { options: RENDERING_SPEEDS as unknown as string[], default: 'DEFAULT' },
-    magicPrompt: { options: MAGIC_PROMPT_OPTIONS as unknown as string[], default: 'AUTO' },
+    resolution: { options: RESOLUTIONS },
+    aspectRatio: { options: ASPECT_RATIOS },
+    renderingSpeed: { options: RENDERING_SPEEDS, default: 'DEFAULT' },
+    magicPrompt: { options: MAGIC_PROMPT_OPTIONS, default: 'AUTO' },
     numImages: { min: 1, max: 8, default: 1 },
-    styleType: { options: STYLE_TYPES as unknown as string[] },
-    stylePreset: { options: STYLE_PRESETS as unknown as string[] },
+    styleType: { options: STYLE_TYPES },
+    stylePreset: { options: STYLE_PRESETS },
   },
   'reframe-v3': {
     image: { required: true, formats: ['JPEG', 'PNG', 'WebP', 'GIF'], mustBeSquare: true },
-    resolution: { required: true, options: RESOLUTIONS as unknown as string[] },
+    resolution: { required: true, options: RESOLUTIONS },
     numImages: { min: 1, max: 8, default: 1 },
-    renderingSpeed: { options: RENDERING_SPEEDS as unknown as string[], default: 'DEFAULT' },
-    stylePreset: { options: STYLE_PRESETS as unknown as string[] },
+    renderingSpeed: { options: RENDERING_SPEEDS, default: 'DEFAULT' },
+    stylePreset: { options: STYLE_PRESETS },
   },
   'replace-background-v3': {
     prompt: { required: true, maxLength: 10000 },
     image: { required: true, formats: ['JPEG', 'PNG', 'WebP', 'GIF'] },
-    magicPrompt: { options: MAGIC_PROMPT_OPTIONS as unknown as string[], default: 'AUTO' },
+    magicPrompt: { options: MAGIC_PROMPT_OPTIONS, default: 'AUTO' },
     numImages: { min: 1, max: 8, default: 1 },
-    renderingSpeed: { options: RENDERING_SPEEDS as unknown as string[], default: 'DEFAULT' },
-    stylePreset: { options: STYLE_PRESETS as unknown as string[] },
+    renderingSpeed: { options: RENDERING_SPEEDS, default: 'DEFAULT' },
+    stylePreset: { options: STYLE_PRESETS },
   },
   'describe': {
     image: { required: true, formats: ['JPEG', 'PNG', 'WebP', 'GIF'] },
-    describeModelVersion: { options: DESCRIBE_MODEL_VERSIONS as unknown as string[] },
+    describeModelVersion: { options: DESCRIBE_MODEL_VERSIONS },
   },
 };
 

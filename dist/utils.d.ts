@@ -6,6 +6,10 @@
  */
 import winston from 'winston';
 import type { SpinnerObject, ImageDimensions } from './types/index.js';
+/** Coerce a caught value to an Error (a non-Error keeps its `message`, else its string form). */
+export declare function toError(e: unknown): Error;
+/** True for an error-like object carrying a Node system error `code` (ENOENT, EACCES, ...). */
+export declare function isErrnoException(e: unknown): e is NodeJS.ErrnoException;
 declare const logger: winston.Logger;
 /**
  * Validate image URL for security.
@@ -93,6 +97,8 @@ export declare function downloadBuffer(url: string, options?: {
  * @param url - HTTPS URL of the result
  * @param outputPath - File to write (parent directories are created)
  * @param options - `maxBytes` (default 2GB) and `timeoutMs` (default 5 minutes)
+ * @throws Error if the download fails or exceeds `maxBytes`; any partial file is
+ *   removed (best effort) before the original error is rethrown
  */
 export declare function downloadToFile(url: string, outputPath: string, options?: {
     maxBytes?: number;

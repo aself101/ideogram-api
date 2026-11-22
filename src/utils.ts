@@ -15,6 +15,20 @@ import { lookup } from 'dns/promises';
 import { isIPv4, isIPv6 } from 'net';
 import type { SpinnerObject, ImageDimensions } from './types/index.js';
 
+/** Coerce a caught value to an Error (a non-Error keeps its `message`, else its string form). */
+export function toError(e: unknown): Error {
+  if (e instanceof Error) return e;
+  if (typeof e === 'object' && e !== null && typeof (e as { message?: unknown }).message === 'string') {
+    return new Error((e as { message: string }).message);
+  }
+  return new Error(String(e));
+}
+
+/** True for an error-like object carrying a Node system error `code` (ENOENT, EACCES, ...). */
+export function isErrnoException(e: unknown): e is NodeJS.ErrnoException {
+  return typeof e === 'object' && e !== null && typeof (e as { code?: unknown }).code === 'string';
+}
+
 // Configure module logger
 const logger = winston.createLogger({
   level: 'info',
@@ -148,8 +162,8 @@ export async function validateImageUrl(url: string): Promise<string> {
 
       logger.debug(`DNS validation passed for ${hostname} (resolved to ${address})`);
     } catch (error) {
-      const err = error as NodeJS.ErrnoException & { message?: string };
-      if (err.code === 'ENOTFOUND') {
+      const err = toError(error);
+      if (isErrnoException(error) && error.code === 'ENOTFOUND') {
         logger.warn(`SECURITY: Domain ${hostname} could not be resolved`);
         throw new Error(`Domain ${hostname} could not be resolved`);
       } else if (err.message && err.message.includes('resolves to internal')) {
@@ -201,10 +215,10 @@ export async function validateImagePath(filepath: string): Promise<string> {
 
     return filepath;
   } catch (error) {
-    const err = error as NodeJS.ErrnoException;
-    if (err.code === 'ENOENT') {
+    const code = isErrnoException(error) ? error.code : undefined;
+    if (code === 'ENOENT') {
       throw new Error(`Image file not found: ${filepath}`);
-    } else if (err.code === 'EACCES') {
+    } else if (code === 'EACCES') {
       throw new Error(`Permission denied reading image file: ${filepath}`);
     }
     throw error;
@@ -245,21 +259,20 @@ export async function getImageDimensions(imageSource: string | Buffer): Promise<
       // Accept Buffer/Uint8Array inputs directly
       const result = imageSize(imageSource as Buffer);
       if (!result.width || !result.height) {
-        throw new Error('Could not determine image dimensions');
+        throw new Error('Could not determine image dimensions (input: Buffer)');
       }
       return { width: result.width, height: result.height };
     } else if (typeof imageSource === 'string') {
       // Paths require async helper
       const result = await imageSizeFromFile(imageSource);
       if (!result.width || !result.height) {
-        throw new Error('Could not determine image dimensions');
+        throw new Error(`Could not determine image dimensions (input: ${imageSource})`);
       }
       return { width: result.width, height: result.height };
     }
-    throw new Error('Unsupported image input');
+    throw new Error(`Unsupported image input (type: ${imageSource === null ? 'null' : typeof imageSource})`);
   } catch (error) {
-    const err = error as Error;
-    throw new Error(`Unable to read image dimensions: ${err.message}`);
+    throw new Error(`Unable to read image dimensions: ${toError(error).message}`);
   }
 }
 
@@ -349,6 +362,8 @@ export async function downloadBuffer(
  * @param url - HTTPS URL of the result
  * @param outputPath - File to write (parent directories are created)
  * @param options - `maxBytes` (default 2GB) and `timeoutMs` (default 5 minutes)
+ * @throws Error if the download fails or exceeds `maxBytes`; any partial file is
+ *   removed (best effort) before the original error is rethrown
  */
 export async function downloadToFile(
   url: string,
@@ -429,9 +444,9 @@ export async function loadAudioAsBuffer(audioPath: string): Promise<Buffer> {
   try {
     buffer = await fs.readFile(audioPath);
   } catch (error) {
-    const err = error as NodeJS.ErrnoException;
-    if (err.code === 'ENOENT') throw new Error(`Audio file not found: ${audioPath}`);
-    if (err.code === 'EACCES') throw new Error(`Permission denied reading audio file: ${audioPath}`);
+    const code = isErrnoException(error) ? error.code : undefined;
+    if (code === 'ENOENT') throw new Error(`Audio file not found: ${audioPath}`);
+    if (code === 'EACCES') throw new Error(`Permission denied reading audio file: ${audioPath}`);
     throw error;
   }
   if (buffer.length === 0) {

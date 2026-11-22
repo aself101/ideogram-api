@@ -374,7 +374,7 @@ export class IdeogramAPI {
 
       // Sanitize error in production
       if (process.env.NODE_ENV === 'production') {
-        throw new IdeogramAPIError('Operation failed. Please try again.', details);
+        throw new IdeogramAPIError(`Operation failed (HTTP ${status}). Please try again.`, details);
       }
 
       throw new IdeogramAPIError(`API error (${status}): ${message}`, details);
@@ -383,10 +383,22 @@ export class IdeogramAPI {
     // Validate Content-Type of response
     if (!contentType.includes('application/json')) {
       this.logger.warn(`Unexpected Content-Type in response: ${contentType || '(none)'}`);
-      throw new Error('Invalid response format from API');
+      throw new Error(
+        `Invalid response format from API (HTTP ${response.status}, Content-Type: ${contentType || '(none)'})`
+      );
     }
 
-    return JSON.parse(raw.toString('utf8')) as T;
+    const parsed: unknown = JSON.parse(raw.toString('utf8'));
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      const got = parsed === null ? 'null' : Array.isArray(parsed) ? 'array' : typeof parsed;
+      throw new IdeogramAPIError(
+        `Invalid response format from API: expected a JSON object, got ${got} (HTTP ${response.status})`,
+        { status: response.status, body: parsed }
+      );
+    }
+    // Field-level shapes are trusted, not validated: the API's documented
+    // response types are assumed, and only the top-level object check is made.
+    return parsed as T;
   }
 
   /** Load a path-or-Buffer image input. */
@@ -675,7 +687,7 @@ export class IdeogramAPI {
   async upscale(params: UpscaleParams): Promise<UpscaleResponse | PriceQuote>;
   async upscale(params: UpscaleParams): Promise<UpscaleResponse | PriceQuote> {
     const retired = ['prompt', 'resemblance', 'detail', 'magicPromptOption', 'numImages'].filter(
-      (key) => (params as unknown as Record<string, unknown>)[key] !== undefined
+      (key) => key in params && Reflect.get(params, key) !== undefined
     );
     if (retired.length > 0) {
       throw new Error(
@@ -1414,6 +1426,13 @@ export function extractImages(
   return (response && response.data) || [];
 }
 
+/** The fields of a response item that extractImageUrls reads. */
+interface UrlBearing {
+  url?: string | null;
+  is_image_safe?: boolean;
+  object_type?: string;
+}
+
 /**
  * Collect the downloadable URLs from any generation response.
  * Skips images that failed safety checks (their `url` is empty) and
@@ -1425,11 +1444,7 @@ export function extractImages(
 export function extractImageUrls(
   response: GenerationResponse | V2GenerationResponse | GenerationStatus | UpscaleResponse
 ): string[] {
-  const items = ((response && response.data) || []) as Array<{
-    url?: string | null;
-    is_image_safe?: boolean;
-    object_type?: string;
-  }>;
+  const items: readonly UrlBearing[] = (response && response.data) || [];
   return items
     .filter((item) => item.is_image_safe !== false)
     .filter((item) => !item.object_type || item.object_type.startsWith('image'))

@@ -289,16 +289,23 @@ export class IdeogramAPI {
             }
             // Sanitize error in production
             if (process.env.NODE_ENV === 'production') {
-                throw new IdeogramAPIError('Operation failed. Please try again.', details);
+                throw new IdeogramAPIError(`Operation failed (HTTP ${status}). Please try again.`, details);
             }
             throw new IdeogramAPIError(`API error (${status}): ${message}`, details);
         }
         // Validate Content-Type of response
         if (!contentType.includes('application/json')) {
             this.logger.warn(`Unexpected Content-Type in response: ${contentType || '(none)'}`);
-            throw new Error('Invalid response format from API');
+            throw new Error(`Invalid response format from API (HTTP ${response.status}, Content-Type: ${contentType || '(none)'})`);
         }
-        return JSON.parse(raw.toString('utf8'));
+        const parsed = JSON.parse(raw.toString('utf8'));
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+            const got = parsed === null ? 'null' : Array.isArray(parsed) ? 'array' : typeof parsed;
+            throw new IdeogramAPIError(`Invalid response format from API: expected a JSON object, got ${got} (HTTP ${response.status})`, { status: response.status, body: parsed });
+        }
+        // Field-level shapes are trusted, not validated: the API's documented
+        // response types are assumed, and only the top-level object check is made.
+        return parsed;
     }
     /** Load a path-or-Buffer image input. */
     async _loadImage(input) {
@@ -524,7 +531,7 @@ export class IdeogramAPI {
         return response;
     }
     async upscale(params) {
-        const retired = ['prompt', 'resemblance', 'detail', 'magicPromptOption', 'numImages'].filter((key) => params[key] !== undefined);
+        const retired = ['prompt', 'resemblance', 'detail', 'magicPromptOption', 'numImages'].filter((key) => key in params && Reflect.get(params, key) !== undefined);
         if (retired.length > 0) {
             throw new Error(`upscale() uses Ideogram's v2 upscaler since 2.0 (the v1 upscale model was retired) and does not accept ${retired.join(', ')}. ` +
                 "Use upscaleFactor ('x2', 'x4' or 'x8') and seed.");
@@ -1020,7 +1027,7 @@ export function extractImages(response) {
  * const urls = extractImageUrls(await api.generateV4({ prompt: 'a cat' }));
  */
 export function extractImageUrls(response) {
-    const items = ((response && response.data) || []);
+    const items = (response && response.data) || [];
     return items
         .filter((item) => item.is_image_safe !== false)
         .filter((item) => !item.object_type || item.object_type.startsWith('image'))

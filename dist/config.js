@@ -220,8 +220,12 @@ function promptMaxLengthFor(operation) {
         return V2_LIMITS.seedance25.promptMaxLength;
     return V2_LIMITS.promptMaxLength;
 }
+/** Membership test for a literal tuple: `list.includes(x)` rejects a plain string argument. */
+export function isOneOf(list, value) {
+    return list.includes(value);
+}
 function checkEnum(name, value, allowed) {
-    if (value !== undefined && !allowed.includes(value)) {
+    if (value !== undefined && !isOneOf(allowed, value)) {
         throw new Error(`Invalid ${name} '${value}'. Must be one of: ${allowed.join(', ')}`);
     }
 }
@@ -318,10 +322,19 @@ function checkExactSize(size, bounds, allowed) {
     if (Math.max(w / h, h / w) > L.maxAspect)
         throw new Error('size aspect ratio must be at most 6:1');
 }
-/** A v2 color palette: a preset name, `{ name }`, or `{ members: [{ color_hex, color_weight? }] }`. */
+/** Validate an optional v2 color palette (undefined passes). */
 function checkColorPalette(palette) {
     if (palette === undefined)
         return;
+    assertColorPalette(palette);
+}
+/**
+ * Assert that a value is a v2 color palette: a preset name, `{ name }`, or
+ * `{ members: [{ color_hex, color_weight? }] }`.
+ *
+ * @throws Error describing the first violated rule
+ */
+export function assertColorPalette(palette) {
     if (typeof palette === 'string') {
         checkEnum('color palette preset', palette, V2_COLOR_PALETTE_PRESETS);
         return;
@@ -356,6 +369,13 @@ function checkColorPalette(palette) {
  * Validate parameters for a v2 operation against the documented rules.
  * Catches mistakes before a request is sent; the CLI runs it on every v2 command.
  * The API client does not call it, so library callers opt in.
+ *
+ * @example
+ * ```ts
+ * validateV2Params('generate-v46', { prompt: 'a lighthouse at dusk', size: 'auto' }); // valid: returns undefined
+ * validateV2Params('generate-v46', { prompt: 'a lighthouse at dusk', quality: 'best' });
+ * // throws: Invalid quality 'best'. Must be one of: very_low, low, medium, high
+ * ```
  *
  * @throws Error describing the first violated rule
  */
@@ -431,7 +451,7 @@ export function validateV2Params(operation, params) {
                 }
                 else {
                     checkExactSize(params.size, { maxPixels: L.maxEditPixels }, "'auto', 'source'");
-                    if (count === 0 && !V4_RESOLUTIONS.includes(params.size)) {
+                    if (count === 0 && !isOneOf(V4_RESOLUTIONS, params.size)) {
                         throw new Error(`Without source images, an exact size must be a supported preset (see V4_RESOLUTIONS)`);
                     }
                 }

@@ -256,7 +256,7 @@ export interface RangeConstraint {
  * Constraint for options (enum values).
  */
 export interface OptionsConstraint {
-    options: string[];
+    options: readonly string[];
     default?: string;
     required?: boolean;
 }
@@ -264,7 +264,7 @@ export interface OptionsConstraint {
  * Color palette constraint.
  */
 export interface ColorPaletteConstraint {
-    presets: string[];
+    presets: readonly string[];
 }
 /**
  * Constraints for a specific operation.
