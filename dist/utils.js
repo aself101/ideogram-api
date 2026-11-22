@@ -97,8 +97,8 @@ export async function validateImageUrl(url) {
     try {
         parsed = new URL(url);
     }
-    catch {
-        throw new Error(`Invalid URL: ${url}`);
+    catch (error) {
+        throw new Error(`Invalid URL: ${url}`, { cause: error });
     }
     // Only allow HTTPS (not HTTP)
     if (parsed.protocol !== 'https:') {
@@ -283,6 +283,7 @@ export async function downloadImageAsBuffer(imageUrl) {
     const allowedMimeTypes = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
     const contentType = response.headers.get('content-type')?.split(';')[0].trim();
     if (!contentType || !allowedMimeTypes.includes(contentType)) {
+        // best effort: the Content-Type error is already decided; a failed cancel adds nothing
         await response.body?.cancel().catch(() => undefined);
         throw new Error(`Invalid Content-Type: ${contentType}. Expected image/* (png, jpeg, webp, gif)`);
     }

@@ -7,6 +7,7 @@
 import path from 'path';
 import fs from 'fs/promises';
 import { IdeogramAPI, isPriceQuote } from './api.js';
+import { discardFile, MAX_TIMER_MS } from './http.js';
 import type {
   V2GenerationResponse,
   V2Acknowledgement,
@@ -107,11 +108,19 @@ export interface V2CliOptions {
 
 /**
  * Message for a failed command. Network errors can arrive with a bare
- * message ("Error"), so append the error code when there is one.
+ * message ("fetch failed", "Error") and the real reason on `cause`, so append
+ * the cause's message when the error's own text does not already carry it, and
+ * the error code (its own, else the cause's) when there is one.
  */
 export function describeError(err: Error & { code?: string }): string {
-  const code = err.code && !err.message.includes(err.code) ? ` [${err.code}]` : '';
-  return `${err.message || 'Unknown error'}${code}`;
+  const cause = err.cause as { code?: unknown; message?: unknown } | undefined;
+  let message = err.message || 'Unknown error';
+  if (typeof cause?.message === 'string' && cause.message && !message.includes(cause.message)) {
+    message = `${message}: ${cause.message}`;
+  }
+  const rawCode = err.code ?? cause?.code;
+  const code = typeof rawCode === 'string' && rawCode && !message.includes(rawCode) ? ` [${rawCode}]` : '';
+  return `${message}${code}`;
 }
 
 /**
@@ -138,9 +147,14 @@ export async function fetchImage(url: string): Promise<Buffer> {
 
 /**
  * Parse an optional integer CLI value, rejecting non-integers rather than sending NaN.
- * `min`, when given, also rejects integers below it.
+ * `min` and `max`, when given, also reject integers outside them.
  */
-export function parseIntOption(name: string, value: string | undefined, min?: number): number | undefined {
+export function parseIntOption(
+  name: string,
+  value: string | undefined,
+  min?: number,
+  max?: number
+): number | undefined {
   if (value === undefined) return undefined;
   if (!/^-?\d+$/.test(value.trim())) {
     throw new Error(`${name} must be an integer (got '${value}')`);
@@ -148,6 +162,9 @@ export function parseIntOption(name: string, value: string | undefined, min?: nu
   const n = Number(value);
   if (min !== undefined && n < min) {
     throw new Error(`${name} must be at least ${min} (got '${value}')`);
+  }
+  if (max !== undefined && n > max) {
+    throw new Error(`${name} must be at most ${max} (got '${value}')`);
   }
   return n;
 }
@@ -345,8 +362,8 @@ export async function executeV2(
 
     const numImages = parseIntOption('--num-images', options.numImages);
     const seed = parseIntOption('--seed', options.seed);
-    const timeoutMs = parseIntOption('--timeout', options.timeout);
-    const pollInterval = parseIntOption('--poll-interval', options.pollInterval, 1) ?? 2000;
+    const timeoutMs = parseIntOption('--timeout', options.timeout, 1, MAX_TIMER_MS);
+    const pollInterval = parseIntOption('--poll-interval', options.pollInterval, 1, MAX_TIMER_MS) ?? 2000;
     const colorPalette = parseColorPalette(options.colorPalette);
 
     if (options.wait && !options.async) {
@@ -530,9 +547,9 @@ export async function executeAsyncV2(
     const numImages = parseIntOption('--num-images', options.numImages);
     const seed = parseIntOption('--seed', options.seed);
     const duration = parseIntOption('--duration', options.duration);
-    const timeoutMs = parseIntOption('--timeout', options.timeout);
-    const pollInterval = parseIntOption('--poll-interval', options.pollInterval, 1) ?? 5000;
-    const waitTimeout = parseIntOption('--wait-timeout', options.waitTimeout, 1) ?? 1800000;
+    const timeoutMs = parseIntOption('--timeout', options.timeout, 1, MAX_TIMER_MS);
+    const pollInterval = parseIntOption('--poll-interval', options.pollInterval, 1, MAX_TIMER_MS) ?? 5000;
+    const waitTimeout = parseIntOption('--wait-timeout', options.waitTimeout, 1, MAX_TIMER_MS) ?? 1800000;
     const assets = parseAssets(options.asset);
 
     validateV2Params(operation, toValidationParams(operation, options, { numImages, seed, duration, assets }));
@@ -686,8 +703,8 @@ export async function executeGetGeneration(
     setLogLevel(globalOptions.logLevel);
     const apiKey = getIdeogramApiKey(globalOptions.apiKey || null);
     const api = new IdeogramAPI(apiKey, undefined, globalOptions.logLevel);
-    const pollInterval = parseIntOption('--poll-interval', options.pollInterval, 1) ?? 2000;
-    const waitTimeout = parseIntOption('--wait-timeout', options.waitTimeout, 1) ?? 1800000;
+    const pollInterval = parseIntOption('--poll-interval', options.pollInterval, 1, MAX_TIMER_MS) ?? 2000;
+    const waitTimeout = parseIntOption('--wait-timeout', options.waitTimeout, 1, MAX_TIMER_MS) ?? 1800000;
 
     const status = options.wait
       ? await waitWithSpinner(api, generationId, pollInterval, waitTimeout)
@@ -731,17 +748,19 @@ function mediaExtension(item: GenerationDataItem): string {
     const ext = path.extname(new URL(item.url as string).pathname).slice(1).toLowerCase();
     return /^[a-z0-9]{2,5}$/.test(ext) ? ext : fallback;
   } catch {
+    // best effort: pure URL parsing, no I/O; an unparseable URL just takes the by-kind extension
     return fallback;
   }
 }
 
 /**
- * Remove the empty placeholder claimPath created when the write that should
- * have filled it failed. Best effort: the file may already be gone (streamToFile
- * removes its own partial output, and warns when it cannot).
+ * Remove the placeholder claimPath created when the write that should have
+ * filled it failed. The file may already be gone (streamToFile removes its own
+ * partial output): ENOENT is fine. Any other failure is logged by discardFile
+ * with the path; the caller still rethrows the original write error.
  */
 async function discardClaimed(filePath: string): Promise<void> {
-  await fs.unlink(filePath).catch(() => undefined);
+  await discardFile(filePath, 'the unfinished output file');
 }
 
 /**

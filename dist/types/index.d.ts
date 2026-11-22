@@ -355,7 +355,7 @@ export interface GenericErrorMessages {
     [statusCode: number]: string;
 }
 /**
- * Axios error response data.
+ * Error response body.
  */
 export interface ApiErrorResponse {
     message?: string;

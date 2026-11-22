@@ -39,6 +39,7 @@ import { IdeogramAPI, extractImages, extractDescriptions, } from './api.js';
 import { getIdeogramApiKey, validateOperationParams, DEFAULT_OUTPUT_DIR, ASPECT_RATIOS, RESOLUTIONS, RENDERING_SPEEDS, STYLE_PRESETS, V4_RESOLUTIONS, V4_ASPECT_RATIOS, V4_RENDERING_SPEEDS, V4_OUTPUT_RESOLUTIONS, V45_QUALITIES, V45_BACKGROUNDS, V46_SIZES, AUTO_RESOLUTION_TIERS, AUTO_STYLE_TYPES, V2_COLOR_PALETTE_PRESETS, SVG_QUALITIES, UPSCALE_FACTORS, ASSET_TYPES, MINIMAX_H3_ASPECT_RATIOS, MINIMAX_H3_RESOLUTIONS, MINIMAX_H3_PROMPT_EXPANSION_MODES, SEEDANCE_25_ASPECT_RATIOS, SEEDANCE_25_RESOLUTIONS, } from './config.js';
 import { saveImage, saveMetadata, generateFilename, ensureDirectory, createSpinner, claimPath, } from './cli-io.js';
 import { logger } from './logger.js';
+import { discardFile } from './http.js';
 import { setLogLevel, assertSquareImage, toError } from './utils.js';
 import { executeV2, executeAsyncV2, executeGetGeneration, describeError, fetchImage, parseIntOption, } from './cli-v2.js';
 // ES modules __dirname equivalent
@@ -50,17 +51,23 @@ const __dirname = path.dirname(__filename);
  * fallback for a deeper layout.
  */
 function getVersion() {
+    const tried = [];
     for (const rel of [['..'], ['..', '..']]) {
+        const file = path.join(__dirname, ...rel, 'package.json');
         try {
-            const pkg = JSON.parse(readFileSync(path.join(__dirname, ...rel, 'package.json'), 'utf8'));
-            if (typeof pkg.version === 'string')
-                return pkg.version;
+            const pkg = JSON.parse(readFileSync(file, 'utf8'));
+            const version = pkg?.version;
+            if (typeof version === 'string')
+                return version;
+            tried.push(`${file} (no string "version" field)`);
         }
-        catch {
-            // try the next location
+        catch (error) {
+            tried.push(`${file} (${toError(error).message})`);
         }
     }
-    return '1.0.0';
+    // Report no version rather than a made-up one.
+    logger.debug(`Could not read the package version; tried: ${tried.join('; ')}`);
+    return 'unknown';
 }
 /**
  * Display usage examples.
@@ -279,7 +286,14 @@ async function downloadImage(url, outputPath) {
     const buffer = await fetchImage(url);
     // Never overwrite: a taken name gets a -2, -3 ... suffix; the final path is returned.
     const claimed = await claimPath(outputPath);
-    await saveImage(buffer, claimed);
+    try {
+        await saveImage(buffer, claimed);
+    }
+    catch (error) {
+        // Remove the placeholder claimPath created; ENOENT is fine, anything else is logged by discardFile.
+        await discardFile(claimed, 'the unfinished output file');
+        throw error;
+    }
     return claimed;
 }
 /**
@@ -973,25 +987,15 @@ async function saveResults(response, operation, promptOrName, baseOutputDir, opt
     }
     const outputDir = path.join(baseOutputDir, operation);
     await ensureDirectory(outputDir);
-    for (let i = 0; i < images.length; i++) {
-        const image = images[i];
-        if (!image.url) {
-            console.log(`⚠ Image ${i + 1}/${images.length} failed safety checks; no URL returned`);
-            continue;
-        }
-        // Truncate the prompt before the index is appended, so items stay distinct
-        const filename = generateFilename(promptOrName, 'png', 50, images.length > 1 ? i + 1 : undefined);
-        const imagePath = path.join(outputDir, filename);
-        // Download and save image (never overwriting an existing file)
-        const savedPath = await downloadImage(image.url, imagePath);
-        console.log(`✓ Saved image ${i + 1}/${images.length}: ${savedPath}`);
-    }
-    // Save metadata
+    // Write the metadata first, with every image's URL, so a failed download
+    // cannot lose the URLs of the images not yet fetched. It is rewritten with
+    // the saved paths once the downloads finish (same order as saveV2Results).
     const metadataFilename = generateFilename(promptOrName, 'json');
     const metadataPath = await claimPath(path.join(outputDir, metadataFilename));
-    await saveMetadata(metadataPath, {
+    const timestamp = response.created || new Date().toISOString();
+    const writeMetadata = (savedPaths) => saveMetadata(metadataPath, {
         operation,
-        timestamp: response.created || new Date().toISOString(),
+        timestamp,
         parameters: options,
         response: {
             imageCount: images.length,
@@ -1001,9 +1005,33 @@ async function saveResults(response, operation, promptOrName, baseOutputDir, opt
                 resolution: img.resolution,
                 seed: img.seed,
                 isImageSafe: img.is_image_safe,
+                path: savedPaths.get(idx),
             })),
         },
     });
+    await writeMetadata(new Map());
+    const savedPaths = new Map();
+    try {
+        for (let i = 0; i < images.length; i++) {
+            const image = images[i];
+            if (!image.url) {
+                console.log(`⚠ Image ${i + 1}/${images.length} failed safety checks; no URL returned`);
+                continue;
+            }
+            // Truncate the prompt before the index is appended, so items stay distinct
+            const filename = generateFilename(promptOrName, 'png', 50, images.length > 1 ? i + 1 : undefined);
+            const imagePath = path.join(outputDir, filename);
+            // Download and save image (never overwriting an existing file)
+            const savedPath = await downloadImage(image.url, imagePath);
+            savedPaths.set(i, savedPath);
+            console.log(`✓ Saved image ${i + 1}/${images.length}: ${savedPath}`);
+        }
+    }
+    catch (error) {
+        console.error(`✗ Download failed after ${savedPaths.size}/${images.length} image(s). Result URLs are in ${metadataPath}`);
+        throw error;
+    }
+    await writeMetadata(savedPaths);
     console.log(`✓ Saved metadata: ${metadataPath}`);
     console.log(`✓ Generated ${images.length} image(s) successfully`);
 }

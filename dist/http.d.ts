@@ -18,6 +18,14 @@
  * Downloads follow up to 5 redirects by hand and re-run the SSRF check on every
  * hop; 1.x checked only the first URL.
  */
+/** Largest delay Node's timers accept (2^31 - 1 ms, about 24.8 days); longer ones fire at once. */
+export declare const MAX_TIMER_MS = 2147483647;
+/**
+ * Require a timeout or interval to be a finite integer in 1..MAX_TIMER_MS.
+ * NaN, Infinity, fractions, zero, negatives and anything over the timer limit
+ * (which Node would silently turn into a 1 ms timer) throw before any work starts.
+ */
+export declare function assertTimerMs(name: string, value: unknown): asserts value is number;
 /**
  * Size of a FormData body: every part's bytes plus a fixed per-part allowance
  * for the multipart framing. Close enough to compare with a ceiling that
@@ -28,6 +36,15 @@ export declare function formDataSize(form: FormData): number;
 export declare class ResponseTooLargeError extends Error {
     constructor(maxBytes: number);
 }
+/**
+ * Remove a file that a failed write left behind. A file that is already gone
+ * (ENOENT) is fine. Any other failure leaves the file on disk: it is logged
+ * with the path and `false` is returned, never swallowed. Returns true when the
+ * file is gone afterwards.
+ *
+ * @param what - Noun phrase for the warning, e.g. "the partial download"
+ */
+export declare function discardFile(filePath: string, what: string): Promise<boolean>;
 /**
  * Read a response body into a Buffer, stopping as soon as it passes `maxBytes`
  * (a declared Content-Length is checked first; a body without one is counted

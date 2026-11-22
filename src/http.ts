@@ -28,6 +28,20 @@ import { logger } from './logger.js';
 
 const MB = 1024 * 1024;
 
+/** Largest delay Node's timers accept (2^31 - 1 ms, about 24.8 days); longer ones fire at once. */
+export const MAX_TIMER_MS = 2147483647;
+
+/**
+ * Require a timeout or interval to be a finite integer in 1..MAX_TIMER_MS.
+ * NaN, Infinity, fractions, zero, negatives and anything over the timer limit
+ * (which Node would silently turn into a 1 ms timer) throw before any work starts.
+ */
+export function assertTimerMs(name: string, value: unknown): asserts value is number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > MAX_TIMER_MS) {
+    throw new Error(`${name} must be an integer between 1 and ${MAX_TIMER_MS} ms (got ${String(value)})`);
+  }
+}
+
 /** Approximate multipart overhead per part (boundary, headers, CRLFs). */
 const PART_OVERHEAD_BYTES = 256;
 
@@ -53,11 +67,36 @@ export class ResponseTooLargeError extends Error {
   }
 }
 
-/** Reject early when the server declares a body larger than the cap. */
-function checkDeclaredLength(response: Response, maxBytes: number): void {
+/**
+ * Reject early when the server declares a body larger than the cap. The body
+ * is cancelled first so the connection is released, not left streaming.
+ */
+async function checkDeclaredLength(response: Response, maxBytes: number): Promise<void> {
   const declared = Number(response.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > maxBytes) {
+    // best effort: the size error below is already decided; a failed cancel adds nothing
+    await response.body?.cancel().catch(() => undefined);
     throw new ResponseTooLargeError(maxBytes);
+  }
+}
+
+/**
+ * Remove a file that a failed write left behind. A file that is already gone
+ * (ENOENT) is fine. Any other failure leaves the file on disk: it is logged
+ * with the path and `false` is returned, never swallowed. Returns true when the
+ * file is gone afterwards.
+ *
+ * @param what - Noun phrase for the warning, e.g. "the partial download"
+ */
+export async function discardFile(filePath: string, what: string): Promise<boolean> {
+  try {
+    await unlink(filePath);
+    return true;
+  } catch (unlinkError) {
+    if ((unlinkError as NodeJS.ErrnoException)?.code === 'ENOENT') return true;
+    const reason = unlinkError instanceof Error ? unlinkError.message : String(unlinkError);
+    logger.warn(`Could not remove ${what} ${filePath}: ${reason}. Delete it manually.`);
+    return false;
   }
 }
 
@@ -79,7 +118,7 @@ function byteLimit(maxBytes: number): Transform {
  * as it streams).
  */
 export async function readBodyWithLimit(response: Response, maxBytes: number): Promise<Buffer> {
-  checkDeclaredLength(response, maxBytes);
+  await checkDeclaredLength(response, maxBytes);
   if (!response.body) return Buffer.alloc(0);
   const chunks: Buffer[] = [];
   let seen = 0;
@@ -89,6 +128,7 @@ export async function readBodyWithLimit(response: Response, maxBytes: number): P
     if (done) break;
     seen += value.byteLength;
     if (seen > maxBytes) {
+      // best effort: the size error is already decided; a failed cancel adds nothing
       await reader.cancel().catch(() => undefined);
       throw new ResponseTooLargeError(maxBytes);
     }
@@ -106,7 +146,7 @@ export async function readBodyWithLimit(response: Response, maxBytes: number): P
  * over the cap fails before the file is created.
  */
 export async function streamToFile(response: Response, outputPath: string, maxBytes: number): Promise<void> {
-  checkDeclaredLength(response, maxBytes);
+  await checkDeclaredLength(response, maxBytes);
   if (!response.body) {
     throw new Error(`Response has no body (HTTP ${response.status}) to write to ${outputPath}`);
   }
@@ -114,22 +154,14 @@ export async function streamToFile(response: Response, outputPath: string, maxBy
     await mkdir(dirname(outputPath), { recursive: true });
     await pipeline(Readable.fromWeb(response.body), byteLimit(maxBytes), createWriteStream(outputPath));
   } catch (error) {
-    try {
-      await unlink(outputPath);
-    } catch (unlinkError) {
-      // Nothing to clean up when the file was never created (ENOENT). Any other
-      // failure leaves a partial file behind: say so, and still throw the
-      // original error.
-      if ((unlinkError as NodeJS.ErrnoException)?.code !== 'ENOENT') {
-        const reason = unlinkError instanceof Error ? unlinkError.message : String(unlinkError);
-        logger.warn(`Could not remove the partial download ${outputPath}: ${reason}. Delete it manually.`);
-        if (error !== null && typeof error === 'object') {
-          try {
-            (error as { partialFile?: string }).partialFile = outputPath;
-          } catch {
-            // frozen error object: the warning above still names the file
-          }
-        }
+    // Nothing to clean up when the file was never created (ENOENT). Any other
+    // failure leaves a partial file behind: discardFile warns, and the original
+    // error is still the one thrown.
+    if (!(await discardFile(outputPath, 'the partial download')) && error !== null && typeof error === 'object') {
+      try {
+        (error as { partialFile?: string }).partialFile = outputPath;
+      } catch {
+        // best effort: a frozen error object cannot carry the tag; the warning already names the file
       }
     }
     throw error;
@@ -160,11 +192,13 @@ export async function fetchFollowingRedirects(url: string, options: SafeFetchOpt
       if (hop >= maxRedirects) {
         throw new Error(`Too many redirects (more than ${maxRedirects})`);
       }
+      // best effort: the redirect is being followed; a failed cancel changes nothing
       await response.body?.cancel().catch(() => undefined);
       current = new URL(response.headers.get('location') as string, target).href;
       continue;
     }
     if (!response.ok) {
+      // best effort: the status error is already decided; a failed cancel adds nothing
       await response.body?.cancel().catch(() => undefined);
       throw new Error(`Download failed with status code ${response.status}`);
     }

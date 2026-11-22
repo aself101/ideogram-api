@@ -62,7 +62,9 @@ export interface V2CliOptions {
 }
 /**
  * Message for a failed command. Network errors can arrive with a bare
- * message ("Error"), so append the error code when there is one.
+ * message ("fetch failed", "Error") and the real reason on `cause`, so append
+ * the cause's message when the error's own text does not already carry it, and
+ * the error code (its own, else the cause's) when there is one.
  */
 export declare function describeError(err: Error & {
     code?: string;
@@ -80,9 +82,9 @@ export declare function getGenerationCommand(generationId: string): string;
 export declare function fetchImage(url: string): Promise<Buffer>;
 /**
  * Parse an optional integer CLI value, rejecting non-integers rather than sending NaN.
- * `min`, when given, also rejects integers below it.
+ * `min` and `max`, when given, also reject integers outside them.
  */
-export declare function parseIntOption(name: string, value: string | undefined, min?: number): number | undefined;
+export declare function parseIntOption(name: string, value: string | undefined, min?: number, max?: number): number | undefined;
 /** Parse --color-palette: a preset name, or a JSON `{ name }` / `{ members }` object. */
 export declare function parseColorPalette(value: string | undefined): V2ColorPalette | undefined;
 /** Parse --asset values of the form TYPE:ID or TYPE:ID:COLLECTION. */

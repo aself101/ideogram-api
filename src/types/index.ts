@@ -421,7 +421,7 @@ export interface GenericErrorMessages {
 }
 
 /**
- * Axios error response data.
+ * Error response body.
  */
 export interface ApiErrorResponse {
   message?: string;

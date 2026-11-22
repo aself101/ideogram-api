@@ -6,16 +6,25 @@
 import path from 'path';
 import fs from 'fs/promises';
 import { IdeogramAPI, isPriceQuote } from './api.js';
+import { discardFile, MAX_TIMER_MS } from './http.js';
 import { getIdeogramApiKey, V2_LIMITS, validateV2Params, assertColorPalette, parseContextWindow, preciseEditBounds, } from './config.js';
 import { saveImage, saveMetadata, generateFilename, ensureDirectory, createSpinner, claimPath, } from './cli-io.js';
 import { setLogLevel, downloadBuffer, downloadToFile, getImageDimensions, toError, } from './utils.js';
 /**
  * Message for a failed command. Network errors can arrive with a bare
- * message ("Error"), so append the error code when there is one.
+ * message ("fetch failed", "Error") and the real reason on `cause`, so append
+ * the cause's message when the error's own text does not already carry it, and
+ * the error code (its own, else the cause's) when there is one.
  */
 export function describeError(err) {
-    const code = err.code && !err.message.includes(err.code) ? ` [${err.code}]` : '';
-    return `${err.message || 'Unknown error'}${code}`;
+    const cause = err.cause;
+    let message = err.message || 'Unknown error';
+    if (typeof cause?.message === 'string' && cause.message && !message.includes(cause.message)) {
+        message = `${message}: ${cause.message}`;
+    }
+    const rawCode = err.code ?? cause?.code;
+    const code = typeof rawCode === 'string' && rawCode && !message.includes(rawCode) ? ` [${rawCode}]` : '';
+    return `${message}${code}`;
 }
 /**
  * The command that retrieves a generation. IDs are URL-safe base64, so about
@@ -37,9 +46,9 @@ export async function fetchImage(url) {
 // ==================== v2 EXECUTION ====================
 /**
  * Parse an optional integer CLI value, rejecting non-integers rather than sending NaN.
- * `min`, when given, also rejects integers below it.
+ * `min` and `max`, when given, also reject integers outside them.
  */
-export function parseIntOption(name, value, min) {
+export function parseIntOption(name, value, min, max) {
     if (value === undefined)
         return undefined;
     if (!/^-?\d+$/.test(value.trim())) {
@@ -48,6 +57,9 @@ export function parseIntOption(name, value, min) {
     const n = Number(value);
     if (min !== undefined && n < min) {
         throw new Error(`${name} must be at least ${min} (got '${value}')`);
+    }
+    if (max !== undefined && n > max) {
+        throw new Error(`${name} must be at most ${max} (got '${value}')`);
     }
     return n;
 }
@@ -225,8 +237,8 @@ export async function executeV2(operation, options, globalOptions) {
         setLogLevel(globalOptions.logLevel);
         const numImages = parseIntOption('--num-images', options.numImages);
         const seed = parseIntOption('--seed', options.seed);
-        const timeoutMs = parseIntOption('--timeout', options.timeout);
-        const pollInterval = parseIntOption('--poll-interval', options.pollInterval, 1) ?? 2000;
+        const timeoutMs = parseIntOption('--timeout', options.timeout, 1, MAX_TIMER_MS);
+        const pollInterval = parseIntOption('--poll-interval', options.pollInterval, 1, MAX_TIMER_MS) ?? 2000;
         const colorPalette = parseColorPalette(options.colorPalette);
         if (options.wait && !options.async) {
             throw new Error('--wait requires --async (synchronous requests already wait)');
@@ -400,9 +412,9 @@ export async function executeAsyncV2(operation, options, globalOptions) {
         const numImages = parseIntOption('--num-images', options.numImages);
         const seed = parseIntOption('--seed', options.seed);
         const duration = parseIntOption('--duration', options.duration);
-        const timeoutMs = parseIntOption('--timeout', options.timeout);
-        const pollInterval = parseIntOption('--poll-interval', options.pollInterval, 1) ?? 5000;
-        const waitTimeout = parseIntOption('--wait-timeout', options.waitTimeout, 1) ?? 1800000;
+        const timeoutMs = parseIntOption('--timeout', options.timeout, 1, MAX_TIMER_MS);
+        const pollInterval = parseIntOption('--poll-interval', options.pollInterval, 1, MAX_TIMER_MS) ?? 5000;
+        const waitTimeout = parseIntOption('--wait-timeout', options.waitTimeout, 1, MAX_TIMER_MS) ?? 1800000;
         const assets = parseAssets(options.asset);
         validateV2Params(operation, toValidationParams(operation, options, { numImages, seed, duration, assets }));
         await preflightV2Images(operation, options);
@@ -542,8 +554,8 @@ export async function executeGetGeneration(generationId, options, globalOptions)
         setLogLevel(globalOptions.logLevel);
         const apiKey = getIdeogramApiKey(globalOptions.apiKey || null);
         const api = new IdeogramAPI(apiKey, undefined, globalOptions.logLevel);
-        const pollInterval = parseIntOption('--poll-interval', options.pollInterval, 1) ?? 2000;
-        const waitTimeout = parseIntOption('--wait-timeout', options.waitTimeout, 1) ?? 1800000;
+        const pollInterval = parseIntOption('--poll-interval', options.pollInterval, 1, MAX_TIMER_MS) ?? 2000;
+        const waitTimeout = parseIntOption('--wait-timeout', options.waitTimeout, 1, MAX_TIMER_MS) ?? 1800000;
         const status = options.wait
             ? await waitWithSpinner(api, generationId, pollInterval, waitTimeout)
             : await api.getGeneration(generationId);
@@ -589,16 +601,18 @@ function mediaExtension(item) {
         return /^[a-z0-9]{2,5}$/.test(ext) ? ext : fallback;
     }
     catch {
+        // best effort: pure URL parsing, no I/O; an unparseable URL just takes the by-kind extension
         return fallback;
     }
 }
 /**
- * Remove the empty placeholder claimPath created when the write that should
- * have filled it failed. Best effort: the file may already be gone (streamToFile
- * removes its own partial output, and warns when it cannot).
+ * Remove the placeholder claimPath created when the write that should have
+ * filled it failed. The file may already be gone (streamToFile removes its own
+ * partial output): ENOENT is fine. Any other failure is logged by discardFile
+ * with the path; the caller still rethrows the original write error.
  */
 async function discardClaimed(filePath) {
-    await fs.unlink(filePath).catch(() => undefined);
+    await discardFile(filePath, 'the unfinished output file');
 }
 /**
  * Download v2 results and write a metadata file. Images that failed safety

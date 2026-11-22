@@ -381,9 +381,21 @@ describe('getGeneration / waitForGeneration', () => {
     fetchMock
       .mockReturnValueOnce(httpError(429, {}))
       .mockReturnValueOnce(ok({ generation_id: 'g', status: 'completed', created: 't', data: [] }));
-    const done = await api.waitForGeneration('g', { intervalMs: 1 });
-    expect(done.status).toBe('completed');
+    // The 1s floor is real time otherwise: sleep is spied, and the delays are asserted in runtime-fixes-2.test.js.
+    const sleeps = [];
+    const timer = vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, ms) => {
+      sleeps.push(ms);
+      fn();
+      return 0;
+    });
+    try {
+      const done = await api.waitForGeneration('g', { intervalMs: 1 });
+      expect(done.status).toBe('completed');
+    } finally {
+      timer.mockRestore();
+    }
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sleeps).toEqual([1000]);
   });
 
   it('rethrows non-429 errors', async () => {

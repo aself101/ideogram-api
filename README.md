@@ -327,9 +327,9 @@ Failures throw `IdeogramAPIError` (a subclass of `Error`):
 - `failureReason`: from `waitForGeneration`, why an async generation failed (e.g. `content_policy_violation`).
 - `code`: set when **no HTTP response arrived** (e.g. `ECONNRESET`, or `ETIMEDOUT` for a timeout).
 
-Every failure after the request was sent is an `IdeogramAPIError`, including a malformed JSON body, a timeout while reading the body, and a non-JSON `Content-Type`; each carries the HTTP `status` where there is one.
+Every failure after the request was sent is an `IdeogramAPIError`, including a malformed JSON body, a timeout while reading the body, a non-JSON `Content-Type`, and a response body over 100MB; each carries the HTTP `status` where there is one.
 
-`waitForGeneration` rejects an `intervalMs` or `timeoutMs` below 1, and its 429 backoff is at least 1 s.
+Timeouts and poll intervals (`timeoutMs`, and `intervalMs` on `waitForGeneration`) must be whole milliseconds from 1 to 2147483647; out-of-range values are rejected before any request is sent. `waitForGeneration`'s 429 backoff doubles the interval, at least 1 s and at most 30 s, and never polls sooner than the current interval.
 
 **Trust model.** Responses are checked to be JSON objects. Their field shapes are typed but not validated at runtime, so a change on Ideogram's side shows up as missing fields rather than as an error.
 
@@ -480,6 +480,8 @@ npm install -g ideogram-api
 # Or install locally for programmatic usage
 npm install ideogram-api
 ```
+
+The package is ESM-only (`"type": "module"`, and `exports` has only `import` and `types` conditions), so use `import ... from 'ideogram-api'`; `require('ideogram-api')` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`.
 
 ### Option 2: Install from source
 
@@ -681,9 +683,9 @@ The v2 commands (`generate-v4` through `seedance-reference-to-video`, `get-gener
 --dry-run                      Validate and price the request; nothing is generated or billed
 --async                        Image commands: return a generation_id at once (add --wait to poll and download)
 --wait                         SVG and video (always async): poll, then download; get-generation: poll until done
---poll-interval <ms>           Poll interval for --wait, at least 1 (default 2000 for image and get-generation, 5000 for SVG and video)
---wait-timeout <ms>            SVG, video and get-generation: give up waiting after this long, at least 1 (default 1800000; the job keeps running)
---timeout <ms>                 Request timeout
+--poll-interval <ms>           Poll interval for --wait, whole ms from 1 to 2147483647 (default 2000 for image and get-generation, 5000 for SVG and video)
+--wait-timeout <ms>            SVG, video and get-generation: give up waiting after this long, whole ms from 1 to 2147483647 (default 1800000; the job keeps running)
+--timeout <ms>                 Request timeout, whole ms from 1 to 2147483647
 --webhook-url <url>            HTTPS URL Ideogram POSTs the finished result to
 --copyright-detection          Run copyright detection (4.x generate and precise-edit commands)
 --context-window <window>      precise-edit, precise-edit-v46: auto (default), none, or y_min,x_min,y_max,x_max
@@ -1061,7 +1063,7 @@ datasets/ideogram/
 
 v2 metadata files record `generationId` and `usageCostUsdMicros` (when Ideogram reports it), and list each result under `response.items` with its `objectType`, saved `path` and, for videos, the measured `duration` and `aspectRatio`.
 
-Output files never overwrite each other: each item gets its own name (the index survives truncation of long prompts), and an existing file is never replaced. For SVG, video and v2 results the CLI writes the metadata file (generation id and every URL) before downloading, so a failed download keeps the record.
+Output files never overwrite each other: each item gets its own name (the index survives truncation of long prompts), and an existing file is never replaced. Every CLI command writes the metadata file (generation id and every URL where there is one) before downloading, so a failed download keeps the record; if the CLI cannot remove a partial or empty output file after a failed write, it warns and names the file.
 
 **Metadata Format:**
 
@@ -1568,6 +1570,7 @@ Rate limits depend on your Ideogram API plan. Check your account at [https://ide
 ## Requirements
 
 - Node.js >= 22.0.0
+- An ES module project: the package is ESM-only and cannot be loaded with `require()`
 - Ideogram API key
 
 ## Additional Resources
@@ -1618,10 +1621,11 @@ Contributions welcome! Please follow the existing code patterns and include test
 - A request that gets no HTTP response throws `IdeogramAPIError` with `code`; `downloadToFile` removes a partial file when a download fails or exceeds its size cap
 - `buildFormData` names and types each file part from its bytes (`image.png` / `image/png`, `audio.wav` / `audio/wav`, ...); 1.x sent every file as `image.jpg`
 - Removed from `ideogram-api/utils`: `saveImage`, `generateFilename`, `ensureDirectory`, `saveMetadata`, `pause`, `createSpinner` and the `logger` re-export (CLI plumbing, now internal; copy the lines you need or use Node's `fs`). `setLogLevel` stays
-- Every failure after the request was sent (malformed JSON body, timeout while reading the body, non-JSON `Content-Type`) is an `IdeogramAPIError`, with `status` where there is one
-- `waitForGeneration` rejects `intervalMs` or `timeoutMs` below 1, and its 429 backoff is at least 1 s; the CLI rejects `--poll-interval` / `--wait-timeout` below 1
+- Every failure after the request was sent (malformed JSON body, timeout while reading the body, non-JSON `Content-Type`, response body over 100MB) is an `IdeogramAPIError`, with `status` where there is one
+- Timeouts and poll intervals (`timeoutMs`, `intervalMs`, CLI `--timeout`, `--poll-interval`, `--wait-timeout`) must be whole milliseconds from 1 to 2147483647 and are rejected before any request is sent otherwise; `waitForGeneration`'s 429 backoff doubles the interval, at least 1 s and at most 30 s, and never polls sooner than the current interval
 - CLI output files never overwrite each other: each item gets its own name (the index survives truncation of long prompts) and an existing file is never replaced
-- For SVG, video and v2 results the CLI writes the metadata file before downloading, so a failed download keeps the record
+- Every CLI command (v1 and v2) writes the metadata file before downloading, so a failed download keeps the record; the CLI warns, naming the file, when it cannot remove a partial or empty output file after a failed write
+- `ideogram --version` prints `unknown` if it cannot read its package.json
 - Requires Node.js 22 or later; see [Migrating from 1.x](#migrating-from-1x)
 
 ### v1.0.3

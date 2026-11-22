@@ -25,7 +25,7 @@
  */
 
 import winston from 'winston';
-import { formDataSize, readBodyWithLimit, describeNetworkError, ResponseTooLargeError } from './http.js';
+import { formDataSize, readBodyWithLimit, describeNetworkError, assertTimerMs, ResponseTooLargeError } from './http.js';
 import { BASE_URL, ENDPOINTS, redactApiKey } from './config.js';
 import { buildFormData, loadImageAsBuffer, loadAudioAsBuffer, assertSquareImage } from './utils.js';
 import type {
@@ -207,7 +207,9 @@ export class IdeogramAPI {
    */
   constructor(apiKey: string, baseUrl: string = BASE_URL, logLevel = 'info') {
     if (!apiKey) {
-      throw new Error('API key is required');
+      throw new Error(
+        'API key is required: pass it as the first argument, new IdeogramAPI(apiKey), e.g. new IdeogramAPI(process.env.IDEOGRAM_API_KEY)'
+      );
     }
 
     // HTTPS enforcement for security
@@ -244,7 +246,9 @@ export class IdeogramAPI {
    */
   private _verifyApiKey(): void {
     if (!this.apiKey) {
-      throw new Error('API key not set. Initialize IdeogramAPI with your API key.');
+      throw new Error(
+        'API key not set. Initialize IdeogramAPI with your API key: new IdeogramAPI(process.env.IDEOGRAM_API_KEY).'
+      );
     }
   }
 
@@ -272,6 +276,8 @@ export class IdeogramAPI {
    */
   private async _request<T>(opts: RequestOptions): Promise<T> {
     this._verifyApiKey();
+    // Before anything is sent: a bad timeout must not look like a request that may have been billed.
+    assertTimerMs('timeoutMs', opts.timeoutMs);
 
     let url = `${this.baseUrl}${opts.endpoint}`;
     if (opts.query && Object.keys(opts.query).length > 0) {
@@ -281,7 +287,7 @@ export class IdeogramAPI {
     this.logger.debug(`Making ${opts.method} request to: ${url}`);
 
     // The body size is known before sending (Buffers have lengths), so the
-    // ceiling is checked here; axios used to enforce it while writing.
+    // ceiling is checked here, before anything is sent.
     const headers: Record<string, string> = { 'Api-Key': this.apiKey };
     let body: FormData | string | undefined;
     let bodyBytes = 0;
@@ -312,8 +318,8 @@ export class IdeogramAPI {
       });
     } catch (error) {
       // No HTTP response. Node reports most of these as "fetch failed" with
-      // the reason on `cause`; two live runs on 2026-11-22 surfaced only
-      // "Error" through axios, so name the code and the billing uncertainty.
+      // the reason on `cause` (two live runs on 2026-11-22 surfaced only a bare
+      // "Error"), so name the code and the billing uncertainty.
       const { message, code } = describeNetworkError(error, opts.timeoutMs);
       this.logger.error(
         `Request failed${code ? ` (${code})` : ''}: ${message}. No HTTP response was received; ` +
@@ -332,7 +338,18 @@ export class IdeogramAPI {
     try {
       raw = await readBodyWithLimit(response, 100 * MB);
     } catch (error) {
-      if (error instanceof ResponseTooLargeError) throw error;
+      if (error instanceof ResponseTooLargeError) {
+        // The size cap fired after the response headers arrived: keep the HTTP
+        // status, and say the request may have been billed like the other post-send paths.
+        this.logger.error(
+          `${error.message} (HTTP ${response.status}). A generation may still have run and been billed. Check before retrying.`
+        );
+        throw new IdeogramAPIError(`${error.message} (HTTP ${response.status})`, {
+          status: response.status,
+          code: 'ERESPONSETOOLARGE',
+          cause: error,
+        });
+      }
       // Headers arrived but the body did not (timeout or reset mid-read). The
       // HTTP status is known, so keep it on the error.
       const { message, code } = describeNetworkError(error, opts.timeoutMs);
@@ -353,9 +370,10 @@ export class IdeogramAPI {
       try {
         data = JSON.parse(raw.toString('utf8')) as ApiErrorResponse;
       } catch {
+        // best effort: an error body that is not JSON; `raw` is kept as the body below
         data = undefined;
       }
-      // Same fallback text axios produced, so 1.x messages are unchanged.
+      // Fallback text matches what 1.x printed for a body without a message, so those messages are unchanged.
       const message = errorMessageFrom(data, `Request failed with status code ${status}`);
       const rejectReason = typeof data?.reject_reason === 'string' ? data.reject_reason : undefined;
       const details = {
@@ -734,7 +752,9 @@ export class IdeogramAPI {
       );
     }
     if (params.image === undefined || params.image === null) {
-      throw new Error('image is required');
+      throw new Error(
+        'image is required: pass a file path, URL, Buffer or base64 string as `image`'
+      );
     }
     this.logger.info(`Upscaling image ${params.upscaleFactor ?? 'x2'}`);
     const formData = buildFormData({
@@ -883,7 +903,9 @@ export class IdeogramAPI {
   async generateV4Custom(params: GenerateV4CustomParams): Promise<V2GenerationResponse | PriceQuote>;
   async generateV4Custom(params: GenerateV4CustomParams): Promise<V2GenerationResponse | PriceQuote> {
     if (!params.customModelUri) {
-      throw new Error('customModelUri is required');
+      throw new Error(
+        "customModelUri is required: pass the model as `customModelUri`, in the form 'model/<model_name>/version/<version_name>'"
+      );
     }
     this.logger.info(`Generating images with custom model ${params.customModelUri}`);
     this.logger.debug(`Prompt: "${params.prompt}"`);
@@ -1028,7 +1050,9 @@ export class IdeogramAPI {
     params: PreciseEditV45Params
   ): Promise<V2GenerationResponse | PriceQuote> {
     if (params.image === undefined || params.image === null) {
-      throw new Error('image is required');
+      throw new Error(
+        'image is required: pass a file path, URL, Buffer or base64 string as `image`'
+      );
     }
     this.logger.info(`Precise editing image with ${label}`);
     this.logger.debug(`Prompt: "${params.prompt}"`);
@@ -1370,12 +1394,13 @@ export class IdeogramAPI {
 
   /**
    * Poll a generation until it completes or fails.
-   * A 429 while polling backs off (doubling the interval, at least 1s and up to 30s) and keeps polling.
+   * A 429 while polling backs off (doubling the interval, at least 1s and up to 30s, and never
+   * shorter than the interval in use) and keeps polling.
    *
    * @param generationId - The generation_id returned by a v2 request
    * @param options - Poll interval, overall timeout, per-poll callback
    * @returns The completed GenerationStatus (with `data`)
-   * @throws Error if `intervalMs` or `timeoutMs` is below 1
+   * @throws Error if `intervalMs` or `timeoutMs` is not an integer from 1 to 2147483647
    * @throws IdeogramAPIError with `failureReason` if the generation failed,
    *   or on timeout (the generation keeps running server-side)
    *
@@ -1389,12 +1414,8 @@ export class IdeogramAPI {
   ): Promise<GenerationStatus> {
     const baseInterval = options.intervalMs ?? 2000;
     const timeoutMs = options.timeoutMs ?? 600000;
-    if (!Number.isFinite(baseInterval) || baseInterval < 1) {
-      throw new Error(`intervalMs must be a number >= 1 (got ${baseInterval})`);
-    }
-    if (!Number.isFinite(timeoutMs) || timeoutMs < 1) {
-      throw new Error(`timeoutMs must be a number >= 1 (got ${timeoutMs})`);
-    }
+    assertTimerMs('intervalMs', baseInterval);
+    assertTimerMs('timeoutMs', timeoutMs);
     const deadline = Date.now() + timeoutMs;
     let interval = baseInterval;
 
@@ -1405,7 +1426,9 @@ export class IdeogramAPI {
         interval = baseInterval;
       } catch (error) {
         if (error instanceof IdeogramAPIError && error.status === 429) {
-          interval = Math.min(Math.max(interval * 2, 1000), 30000);
+          // Double (at least 1s, at most 30s), but never poll sooner than the
+          // current interval: a base interval above 30s must not be shortened.
+          interval = Math.max(interval, Math.min(Math.max(interval * 2, 1000), 30000));
           this.logger.warn(`Rate limited while polling ${generationId}; retrying in ${interval}ms`);
         } else {
           throw error;

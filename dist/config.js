@@ -575,8 +575,9 @@ export function validateV2Params(operation, params) {
         case 'precise-edit-v45':
         case 'precise-edit-v46': {
             checkEnum('quality', params.quality, V45_QUALITIES);
-            if (params.hasImage === false)
-                throw new Error('image is required');
+            if (params.hasImage === false) {
+                throw new Error('image is required: pass a file path, URL, Buffer or base64 string as `image`');
+            }
             const refs = params.referenceImageCount ?? 0;
             const maxRefs = params.hasMask
                 ? L.preciseEdit.maxReferenceImagesWithMask
@@ -592,8 +593,9 @@ export function validateV2Params(operation, params) {
             break;
         }
         case 'upscale-auto': {
-            if (params.hasImage === false)
-                throw new Error('image is required');
+            if (params.hasImage === false) {
+                throw new Error('image is required: pass a file path, URL, Buffer or base64 string as `image`');
+            }
             checkEnum('upscale factor', params.upscaleFactor, UPSCALE_FACTORS);
             break;
         }
