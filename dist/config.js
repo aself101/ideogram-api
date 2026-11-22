@@ -234,7 +234,16 @@ function promptMaxLengthFor(operation) {
         return V2_LIMITS.seedance25.promptMaxLength;
     return V2_LIMITS.promptMaxLength;
 }
-/** Membership test for a literal tuple: `list.includes(x)` rejects a plain string argument. */
+/**
+ * Membership test for a literal tuple: `list.includes(x)` rejects a plain string argument.
+ *
+ * @param list - The allowed values (e.g. a `V45_QUALITIES` tuple)
+ * @param value - The string to look for
+ * @returns True when `value` is in `list`
+ *
+ * @example
+ * isOneOf(V45_QUALITIES, userInput); // true for 'high', false for 'best'
+ */
 export function isOneOf(list, value) {
     return list.includes(value);
 }
@@ -252,7 +261,17 @@ function parseDims(value) {
     const m = /^(\d+)x(\d+)$/.exec(value);
     return m ? [Number(m[1]), Number(m[2])] : null;
 }
-/** Whole-image edit bound for a precise-edit model at a quality. */
+/**
+ * Whole-image edit bound for a precise-edit model at a quality.
+ *
+ * @param model - Precise-edit model, '4.5' or '4.6'
+ * @param quality - 4.6 only: 'very_low' has a smaller area and a side limit
+ * @returns The pixel-area bound, plus `maxSide` when the model has one
+ *
+ * @example
+ * preciseEditBounds('4.6', 'very_low'); // { maxPixels: ..., maxSide: ... }
+ * preciseEditBounds('4.5');             // { maxPixels: 4194304 }
+ */
 export function preciseEditBounds(model, quality) {
     if (model === '4.5')
         return { maxPixels: V2_LIMITS.maxEditPixels };
@@ -267,6 +286,17 @@ export function preciseEditBounds(model, quality) {
  * Bounds against the image itself need its dimensions; pass them when known.
  * `bounds` defaults to the Ideogram 4.5 limit (2048x2048 pixels); use
  * preciseEditBounds('4.6', quality) for 4.6.
+ *
+ * @param value - `y_min,x_min,y_max,x_max` in pixels, or 'none' / 'auto'
+ * @param imageDims - The image's size, to check the region against it when known
+ * @param bounds - Area and side limits (default: the 4.5 limit)
+ * @returns The parsed region, or null for 'none' / 'auto'
+ * @throws Error if the region is malformed or breaks a size rule
+ *
+ * @example
+ * parseContextWindow('0,0,512,512', { width: 1024, height: 1024 });
+ * // { yMin: 0, xMin: 0, yMax: 512, xMax: 512 }
+ * parseContextWindow('auto'); // null
  */
 export function parseContextWindow(value, imageDims, bounds = { maxPixels: V2_LIMITS.maxEditPixels }) {
     if (value === 'none' || value === 'auto')
@@ -346,7 +376,12 @@ function checkColorPalette(palette) {
  * Assert that a value is a v2 color palette: a preset name, `{ name }`, or
  * `{ members: [{ color_hex, color_weight? }] }`.
  *
+ * @param palette - The value to check
+ * @returns Nothing; narrows `palette` to `V2ColorPalette` when it returns
  * @throws Error describing the first violated rule
+ *
+ * @example
+ * assertColorPalette({ members: [{ color_hex: '#FF0000', color_weight: 0.5 }] });
  */
 export function assertColorPalette(palette) {
     if (typeof palette === 'string') {
@@ -383,6 +418,10 @@ export function assertColorPalette(palette) {
  * Validate parameters for a v2 operation against the documented rules.
  * Catches mistakes before a request is sent; the CLI runs it on every v2 command.
  * The API client does not call it, so library callers opt in.
+ *
+ * @param operation - The v2 operation the parameters are for (e.g. 'generate-v46')
+ * @param params - The parameters, camelCase as passed to the API method
+ * @returns Nothing when the parameters are valid
  *
  * @example
  * ```ts

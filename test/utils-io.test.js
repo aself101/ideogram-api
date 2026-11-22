@@ -17,20 +17,15 @@ import { fetchMock, timeoutSpy, resetHttp } from './helpers/http.js';
 import {
   toError,
   isErrnoException,
-  createSpinner,
   setLogLevel,
-  logger,
-  pause,
-  generateFilename,
-  saveImage,
-  saveMetadata,
-  ensureDirectory,
   getImageDimensions,
   downloadImageAsBuffer,
   downloadBuffer,
   downloadToFile,
   buildFormData,
 } from '../src/utils.js';
+import { createSpinner, pause, generateFilename, saveImage, saveMetadata, ensureDirectory } from '../src/cli-io.js';
+import { logger } from '../src/logger.js';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'ideogram-io-'));
 

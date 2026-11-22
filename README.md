@@ -327,6 +327,12 @@ Failures throw `IdeogramAPIError` (a subclass of `Error`):
 - `failureReason`: from `waitForGeneration`, why an async generation failed (e.g. `content_policy_violation`).
 - `code`: set when **no HTTP response arrived** (e.g. `ECONNRESET`, or `ETIMEDOUT` for a timeout).
 
+Every failure after the request was sent is an `IdeogramAPIError`, including a malformed JSON body, a timeout while reading the body, and a non-JSON `Content-Type`; each carries the HTTP `status` where there is one.
+
+`waitForGeneration` rejects an `intervalMs` or `timeoutMs` below 1, and its 429 backoff is at least 1 s.
+
+**Trust model.** Responses are checked to be JSON objects. Their field shapes are typed but not validated at runtime, so a change on Ideogram's side shows up as missing fields rather than as an error.
+
 **A request with no response may still have been billed.** On 2026-11-22 one `generate-auto` request failed client-side with no response and was charged all the same. Check your usage before retrying a failed generation.
 
 ### The `ideogram-api/config` module
@@ -340,7 +346,10 @@ Endpoint paths, limits, option lists and the validators are exported from `ideog
 - Option lists, as read-only tuples: `RENDERING_SPEEDS`, `STYLE_PRESETS`, `V4_RESOLUTIONS`, `V45_QUALITIES`, `V46_SIZES`, `UPSCALE_FACTORS`, `MINIMAX_H3_RESOLUTIONS`, `SEEDANCE_25_RESOLUTIONS`, and the rest (`ASPECT_RATIOS`, `V4_ASPECT_RATIOS`, `AUTO_STYLE_TYPES`, `SVG_QUALITIES`, ...). Derive a literal union with `typeof V46_SIZES[number]`; test membership of an arbitrary string with `isOneOf(V46_SIZES, value)`.
 - `assertColorPalette(value)`: throws unless `value` is a valid v2 color palette (a preset name, `{ name }` or `{ members }`), and narrows it to `V2ColorPalette`.
 
-`ideogram-api/utils` also exports `toError(e)` (any thrown value as an `Error`) and `isErrnoException(e)` (a type guard for Node's errors with a `code`).
+- `parseContextWindow(value, imageDims?, bounds?)`: parses a precise-edit context window (`'none'`, `'auto'` or `'y_min,x_min,y_max,x_max'`) into `{ yMin, xMin, yMax, xMax }`, or `null` for `'none'` / `'auto'`; throws on a malformed or out-of-rule region.
+- `getIdeogramApiKey(cliApiKey?)`: the API key from the CLI value or `IDEOGRAM_API_KEY`; throws when neither is set.
+- `redactApiKey(apiKey)`: the key as `xxx...` plus its last 4 characters, for logs.
+- `BASE_URL` (`https://api.ideogram.ai`), `API_VERSION` (`v1`) and `DEFAULT_OUTPUT_DIR` (`IDEOGRAM_OUTPUT_DIR`, else `datasets/ideogram`).
 
 ```typescript
 import { validateV2Params, preciseEditBounds, V2_LIMITS, ENDPOINTS } from 'ideogram-api/config';
@@ -356,6 +365,35 @@ console.log(preciseEditBounds('4.6', 'very_low')); // { maxPixels: 4194304, maxS
 console.log(V2_LIMITS.svg.promptMaxLength, ENDPOINTS.UPSCALE_AUTO); // 9500 '/v2/image/upscale/auto'
 ```
 
+### The `ideogram-api/utils` module
+
+Input handling, downloads and small helpers, exported from `ideogram-api/utils`:
+
+- `validateImageUrl(url)`: SSRF check on an image URL; resolves to the URL, throws if it is blocked.
+- `validateImagePath(filepath)`: checks a local image path; resolves to the validated path.
+- `assertSquareImage(image)`: throws unless the image (path or Buffer) is square.
+- `getImageDimensions(image)`: `{ width, height }` of an image path or Buffer.
+- `loadImageAsBuffer(path)`: reads and validates a local image into a Buffer.
+- `downloadImageAsBuffer(url)`: downloads an image (50MB cap, Content-Type checked) with SSRF checks on every redirect.
+- `downloadBuffer(url, { maxBytes?, timeoutMs? })`: downloads a result into memory (default 200MB, 60 s), without the Content-Type check.
+- `downloadToFile(url, outputPath, { maxBytes?, timeoutMs? })`: streams a result to a file (default 2GB, 5 minutes); removes the partial file on failure.
+- `detectImageType(buffer)` / `detectAudioType(buffer)`: `{ extension, mimeType }` from magic bytes (PNG, JPEG, WebP, GIF / WAV, MP3), or `null`.
+- `loadAudioAsBuffer(path)`: reads a local MP3 or WAV into a Buffer.
+- `buildFormData(params)`: a native `FormData` from a params object.
+- `toError(e)`: any thrown value as an `Error`.
+- `isErrnoException(e)`: type guard for Node errors with a `code`.
+- `setLogLevel(level)`: `'debug'`, `'info'`, `'warn'` or `'error'`.
+
+```typescript
+import { loadImageAsBuffer, getImageDimensions, downloadToFile } from 'ideogram-api/utils';
+
+const bytes = await loadImageAsBuffer('./lighthouse.png');
+console.log(await getImageDimensions(bytes)); // { width: ..., height: ... }
+await downloadToFile('https://ideogram.ai/api/images/ephemeral/example.mp4', './out/example.mp4');
+```
+
+`buildFormData` names and types each file part from its bytes (`image.png` / `image/png`, `audio.wav` / `audio/wav`, ...). Bytes it does not recognize are sent as `image.jpg` / `image/jpeg`.
+
 ## Migrating from 1.x
 
 2.0 has breaking changes:
@@ -365,6 +403,8 @@ console.log(V2_LIMITS.svg.promptMaxLength, ENDPOINTS.UPSCALE_AUTO); // 9500 '/v2
 - **`upscale()` moved to the v2 API** (`/v2/image/upscale/auto`), because Ideogram retired the v1 endpoint. It takes only `image`, `upscaleFactor` (`'x2'` | `'x4'` | `'x8'`), `seed` and the v2 options (`async`, `webhookUrl`, `dryRun`, `timeoutMs`). Passing `prompt`, `resemblance`, `detail`, `magicPromptOption` or `numImages` throws. It returns an `UpscaleResponse`; use `extractImageUrls` for the URL. On the CLI, `--prompt`, `--resemblance`, `--detail`, `--magic-prompt-option` and `--num-images` are removed from `upscale`, and output goes to `upscale-auto/` (was `upscale/`).
 - **`ENDPOINTS.UPSCALE` is now `ENDPOINTS.UPSCALE_AUTO`**, and the `'upscale'` entry is gone from `OPERATION_CONSTRAINTS`.
 - **Option constants are literal tuples** (`as const`) rather than `string[]`, so `(typeof RENDERING_SPEEDS)[number]` is a union of the literal values.
+- **`buildFormData` names and types file parts from their bytes.** Each file part is now `image.png` / `image/png`, `audio.wav` / `audio/wav` and so on, where 1.x sent every file as `image.jpg`. Bytes it does not recognize still go as `image.jpg` / `image/jpeg`.
+- **CLI helpers removed from `ideogram-api/utils`:** `saveImage`, `generateFilename`, `ensureDirectory`, `saveMetadata`, `pause`, `createSpinner` and the `logger` re-export. They were CLI plumbing and moved to an internal CLI module. Copy the few lines you need, or use Node's `fs` (`fs.mkdir(dir, { recursive: true })`, `fs.writeFile`). `setLogLevel` is still exported.
 
 ```typescript
 // 1.x
@@ -641,8 +681,8 @@ The v2 commands (`generate-v4` through `seedance-reference-to-video`, `get-gener
 --dry-run                      Validate and price the request; nothing is generated or billed
 --async                        Image commands: return a generation_id at once (add --wait to poll and download)
 --wait                         SVG and video (always async): poll, then download; get-generation: poll until done
---poll-interval <ms>           Poll interval for --wait (default 2000 for image and get-generation, 5000 for SVG and video)
---wait-timeout <ms>            SVG, video and get-generation: give up waiting after this long (default 1800000; the job keeps running)
+--poll-interval <ms>           Poll interval for --wait, at least 1 (default 2000 for image and get-generation, 5000 for SVG and video)
+--wait-timeout <ms>            SVG, video and get-generation: give up waiting after this long, at least 1 (default 1800000; the job keeps running)
 --timeout <ms>                 Request timeout
 --webhook-url <url>            HTTPS URL Ideogram POSTs the finished result to
 --copyright-detection          Run copyright detection (4.x generate and precise-edit commands)
@@ -1020,6 +1060,8 @@ datasets/ideogram/
 ```
 
 v2 metadata files record `generationId` and `usageCostUsdMicros` (when Ideogram reports it), and list each result under `response.items` with its `objectType`, saved `path` and, for videos, the measured `duration` and `aspectRatio`.
+
+Output files never overwrite each other: each item gets its own name (the index survives truncation of long prompts), and an existing file is never replaced. For SVG, video and v2 results the CLI writes the metadata file (generation id and every URL) before downloading, so a failed download keeps the record.
 
 **Metadata Format:**
 
@@ -1574,6 +1616,12 @@ Contributions welcome! Please follow the existing code patterns and include test
 - `upscale()` calls the v2 upscaler (`upscaleFactor` x2 / x4 / x8); Ideogram retired the v1 endpoint, and its `prompt` / `resemblance` / `detail` / `magicPromptOption` / `numImages` are gone
 - CLI `upscale` writes to `upscale-auto/` (was `upscale/`), and its `--prompt`, `--resemblance`, `--detail`, `--magic-prompt-option` and `--num-images` flags are removed
 - A request that gets no HTTP response throws `IdeogramAPIError` with `code`; `downloadToFile` removes a partial file when a download fails or exceeds its size cap
+- `buildFormData` names and types each file part from its bytes (`image.png` / `image/png`, `audio.wav` / `audio/wav`, ...); 1.x sent every file as `image.jpg`
+- Removed from `ideogram-api/utils`: `saveImage`, `generateFilename`, `ensureDirectory`, `saveMetadata`, `pause`, `createSpinner` and the `logger` re-export (CLI plumbing, now internal; copy the lines you need or use Node's `fs`). `setLogLevel` stays
+- Every failure after the request was sent (malformed JSON body, timeout while reading the body, non-JSON `Content-Type`) is an `IdeogramAPIError`, with `status` where there is one
+- `waitForGeneration` rejects `intervalMs` or `timeoutMs` below 1, and its 429 backoff is at least 1 s; the CLI rejects `--poll-interval` / `--wait-timeout` below 1
+- CLI output files never overwrite each other: each item gets its own name (the index survives truncation of long prompts) and an existing file is never replaced
+- For SVG, video and v2 results the CLI writes the metadata file before downloading, so a failed download keeps the record
 - Requires Node.js 22 or later; see [Migrating from 1.x](#migrating-from-1x)
 
 ### v1.0.3

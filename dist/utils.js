@@ -5,8 +5,7 @@
  * image handling, FormData building, and data transformations.
  */
 import fs from 'fs/promises';
-import path from 'path';
-import winston from 'winston';
+import { logger } from './logger.js';
 import { fetchFollowingRedirects, readBodyWithLimit, streamToFile } from './http.js';
 import { imageSize } from 'image-size';
 import { imageSizeFromFile } from 'image-size/fromFile';
@@ -17,22 +16,14 @@ export function toError(e) {
     if (e instanceof Error)
         return e;
     if (typeof e === 'object' && e !== null && typeof e.message === 'string') {
-        return new Error(e.message);
+        return new Error(e.message, { cause: e });
     }
-    return new Error(String(e));
+    return new Error(String(e), { cause: e });
 }
 /** True for an error-like object carrying a Node system error `code` (ENOENT, EACCES, ...). */
 export function isErrnoException(e) {
     return typeof e === 'object' && e !== null && typeof e.code === 'string';
 }
-// Configure module logger
-const logger = winston.createLogger({
-    level: 'info',
-    format: winston.format.combine(winston.format.timestamp(), winston.format.printf(({ timestamp, level, message }) => {
-        return `${timestamp} - ${level.toUpperCase()} - ${message}`;
-    })),
-    transports: [new winston.transports.Console()],
-});
 /**
  * Helper function to check if an IP address is blocked (private/internal).
  *
@@ -144,7 +135,7 @@ export async function validateImageUrl(url) {
             const err = toError(error);
             if (isErrnoException(error) && error.code === 'ENOTFOUND') {
                 logger.warn(`SECURITY: Domain ${hostname} could not be resolved`);
-                throw new Error(`Domain ${hostname} could not be resolved`);
+                throw new Error(`Domain ${hostname} could not be resolved`, { cause: error });
             }
             else if (err.message && err.message.includes('resolves to internal')) {
                 // Re-throw our custom error about blocked IPs
@@ -152,7 +143,7 @@ export async function validateImageUrl(url) {
             }
             else {
                 logger.warn(`SECURITY: DNS lookup failed for ${hostname}: ${err.message}`);
-                throw new Error(`Failed to validate domain ${hostname}: ${err.message}`);
+                throw new Error(`Failed to validate domain ${hostname}: ${err.message}`, { cause: error });
             }
         }
     }
@@ -190,10 +181,10 @@ export async function validateImagePath(filepath) {
     catch (error) {
         const code = isErrnoException(error) ? error.code : undefined;
         if (code === 'ENOENT') {
-            throw new Error(`Image file not found: ${filepath}`);
+            throw new Error(`Image file not found: ${filepath}`, { cause: error });
         }
         else if (code === 'EACCES') {
-            throw new Error(`Permission denied reading image file: ${filepath}`);
+            throw new Error(`Permission denied reading image file: ${filepath}`, { cause: error });
         }
         throw error;
     }
@@ -245,7 +236,7 @@ export async function getImageDimensions(imageSource) {
         throw new Error(`Unsupported image input (type: ${imageSource === null ? 'null' : typeof imageSource})`);
     }
     catch (error) {
-        throw new Error(`Unable to read image dimensions: ${toError(error).message}`);
+        throw new Error(`Unable to read image dimensions: ${toError(error).message}`, { cause: error });
     }
 }
 /**
@@ -304,6 +295,11 @@ export async function downloadImageAsBuffer(imageUrl) {
  *
  * @param url - HTTPS URL of the result
  * @param options - `maxBytes` (default 200MB, for 8k transparent PNGs) and `timeoutMs` (default 60s)
+ * @returns The response body
+ * @throws Error if the URL fails validation, the download fails, or the body exceeds `maxBytes`
+ *
+ * @example
+ * const bytes = await downloadBuffer('https://ideogram.ai/api/images/ephemeral/x.png', { timeoutMs: 30000 });
  */
 export async function downloadBuffer(url, options = {}) {
     const response = await fetchFollowingRedirects(url, {
@@ -319,8 +315,12 @@ export async function downloadBuffer(url, options = {}) {
  * @param url - HTTPS URL of the result
  * @param outputPath - File to write (parent directories are created)
  * @param options - `maxBytes` (default 2GB) and `timeoutMs` (default 5 minutes)
+ * @returns Resolves once the file is fully written
  * @throws Error if the download fails or exceeds `maxBytes`; any partial file is
  *   removed (best effort) before the original error is rethrown
+ *
+ * @example
+ * await downloadToFile('https://ideogram.ai/api/videos/x.mp4', 'out/x.mp4', { timeoutMs: 600000 });
  */
 export async function downloadToFile(url, outputPath, options = {}) {
     const response = await fetchFollowingRedirects(url, {
@@ -393,9 +393,9 @@ export async function loadAudioAsBuffer(audioPath) {
     catch (error) {
         const code = isErrnoException(error) ? error.code : undefined;
         if (code === 'ENOENT')
-            throw new Error(`Audio file not found: ${audioPath}`);
+            throw new Error(`Audio file not found: ${audioPath}`, { cause: error });
         if (code === 'EACCES')
-            throw new Error(`Permission denied reading audio file: ${audioPath}`);
+            throw new Error(`Permission denied reading audio file: ${audioPath}`, { cause: error });
         throw error;
     }
     if (buffer.length === 0) {
@@ -468,161 +468,6 @@ export function buildFormData(params) {
     return formData;
 }
 /**
- * Save base64-encoded or raw Buffer image to file.
- * Creates output directory if it doesn't exist.
- *
- * @param imageData - Base64-encoded string or Buffer
- * @param outputPath - Path to save file
- * @returns Path to saved file
- *
- * @example
- * await saveImage(imageBuffer, 'output/image.png');
- * await saveImage(base64String, 'output/image.png');
- */
-export async function saveImage(imageData, outputPath) {
-    // Ensure directory exists
-    const dir = path.dirname(outputPath);
-    await fs.mkdir(dir, { recursive: true });
-    let buffer;
-    if (Buffer.isBuffer(imageData)) {
-        // Already a buffer
-        buffer = imageData;
-    }
-    else if (typeof imageData === 'string') {
-        // Base64 string
-        buffer = Buffer.from(imageData, 'base64');
-    }
-    else {
-        throw new Error('imageData must be a Buffer or base64-encoded string');
-    }
-    // Write to file
-    await fs.writeFile(outputPath, buffer);
-    logger.debug(`Saved image to: ${outputPath}`);
-    return outputPath;
-}
-/**
- * Generate a safe filename from a prompt and timestamp.
- * Removes special characters and limits length.
- *
- * @param prompt - Generation prompt
- * @param extension - File extension (default: 'png')
- * @param maxLength - Maximum filename length excluding extension (default: 50)
- * @returns Safe filename with timestamp
- *
- * @example
- * generateFilename('A beautiful sunset over mountains');
- * // '20250119_143022_beautiful-sunset-over-mountains.png'
- */
-export function generateFilename(prompt, extension = 'png', maxLength = 50) {
-    // Create timestamp prefix (YYYYMMDD_HHMMSS)
-    const now = new Date();
-    const timestamp = now
-        .toISOString()
-        .replace(/[-:]/g, '')
-        .replace('T', '_')
-        .split('.')[0];
-    // Sanitize prompt: lowercase, remove special chars, replace spaces with hyphens
-    const sanitized = prompt
-        .toLowerCase()
-        .replace(/[^a-z0-9\s]/g, '')
-        .trim()
-        .replace(/\s+/g, '-')
-        .substring(0, maxLength);
-    // Sanitize extension: remove non-alphanumeric chars, limit length, default to 'png'
-    const sanitizedExtension = extension
-        .toLowerCase()
-        .replace(/^\.+/, '') // Remove leading dots
-        .replace(/[^a-z0-9]/g, '') // Remove non-alphanumeric
-        .substring(0, 10) || 'png'; // Fallback to 'png' if empty after sanitization
-    return `${timestamp}_${sanitized}.${sanitizedExtension}`;
-}
-/**
- * Ensure output directory exists.
- * Creates directory recursively if it doesn't exist.
- *
- * @param dirPath - Directory path to create
- * @returns Created directory path
- *
- * @example
- * await ensureDirectory('datasets/ideogram/generate-v3');
- */
-export async function ensureDirectory(dirPath) {
-    await fs.mkdir(dirPath, { recursive: true });
-    return dirPath;
-}
-/**
- * Save metadata JSON file alongside image.
- *
- * @param metadataPath - Path to save JSON metadata
- * @param metadata - Metadata object
- * @returns Path to saved metadata file
- *
- * @example
- * await saveMetadata('output/image.json', { operation: 'generate', prompt: '...' });
- */
-export async function saveMetadata(metadataPath, metadata) {
-    const jsonContent = JSON.stringify(metadata, null, 2);
-    await fs.writeFile(metadataPath, jsonContent, 'utf8');
-    logger.debug(`Saved metadata to: ${metadataPath}`);
-    return metadataPath;
-}
-/**
- * Pause execution for specified milliseconds.
- *
- * @param ms - Milliseconds to pause
- *
- * @example
- * await pause(2000); // Wait 2 seconds
- */
-export function pause(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
-/**
- * Create a spinner for long-running operations.
- * Returns an object with start(), stop(), and update() methods.
- *
- * @param message - Message to display with spinner
- * @returns Spinner object with start(), stop(), and update() methods
- *
- * @example
- * const spinner = createSpinner('Generating image...');
- * spinner.start();
- * // ... do work ...
- * spinner.stop('✓ Complete!');
- */
-export function createSpinner(message) {
-    const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-    let frameIndex = 0;
-    let interval = null;
-    let currentMessage = message;
-    return {
-        start() {
-            process.stdout.write('\n');
-            interval = setInterval(() => {
-                const frame = frames[frameIndex];
-                process.stdout.write(`\r${frame} ${currentMessage}`);
-                frameIndex = (frameIndex + 1) % frames.length;
-            }, 80);
-        },
-        stop(finalMessage = null) {
-            if (interval) {
-                clearInterval(interval);
-                interval = null;
-            }
-            process.stdout.write('\r');
-            if (finalMessage) {
-                process.stdout.write(`${finalMessage}\n`);
-            }
-            else {
-                process.stdout.write('\r\x1b[K'); // Clear line
-            }
-        },
-        update(newMessage) {
-            currentMessage = newMessage;
-        },
-    };
-}
-/**
  * Set logger level.
  *
  * @param level - Log level (debug, info, warn, error)
@@ -630,5 +475,4 @@ export function createSpinner(message) {
 export function setLogLevel(level) {
     logger.level = level.toLowerCase();
 }
-export { logger };
 //# sourceMappingURL=utils.js.map

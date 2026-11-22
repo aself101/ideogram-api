@@ -24,7 +24,7 @@
  * The v3 operations and the v2 image default (`async` unset) are synchronous.
  */
 import winston from 'winston';
-import { formDataSize, readBodyWithLimit, describeNetworkError } from './http.js';
+import { formDataSize, readBodyWithLimit, describeNetworkError, ResponseTooLargeError } from './http.js';
 import { BASE_URL, ENDPOINTS, redactApiKey } from './config.js';
 import { buildFormData, loadImageAsBuffer, loadAudioAsBuffer, assertSquareImage } from './utils.js';
 /** Default request timeout for v1 (Ideogram 3.0) endpoints, unchanged since 1.0. */
@@ -52,6 +52,8 @@ const BODY_LIMITS = {
     // documents no count; the same ceiling is assumed.
     videoReferences: 12 * 50 * MB + MB,
 };
+/** Bytes of an unparseable response body kept on the error. */
+const BODY_EXCERPT_BYTES = 500;
 /** Normalize a v2 color palette: a bare preset name becomes `{ name }`. */
 function toPaletteObject(palette) {
     if (palette === undefined)
@@ -240,7 +242,20 @@ export class IdeogramAPI {
             }
             throw new IdeogramAPIError(`Request failed${code ? ` (${code})` : ''}: ${message}`, { code, cause: error });
         }
-        const raw = await readBodyWithLimit(response, 100 * MB);
+        let raw;
+        try {
+            raw = await readBodyWithLimit(response, 100 * MB);
+        }
+        catch (error) {
+            if (error instanceof ResponseTooLargeError)
+                throw error;
+            // Headers arrived but the body did not (timeout or reset mid-read). The
+            // HTTP status is known, so keep it on the error.
+            const { message, code } = describeNetworkError(error, opts.timeoutMs);
+            this.logger.error(`Reading the response body failed (HTTP ${response.status})${code ? ` (${code})` : ''}: ${message}. ` +
+                'A generation may still have run and been billed. Check before retrying.');
+            throw new IdeogramAPIError(`Request failed while reading the response (HTTP ${response.status})${code ? ` (${code})` : ''}: ${message}`, { status: response.status, code, cause: error });
+        }
         const contentType = response.headers.get('content-type') ?? '';
         if (!response.ok) {
             const status = response.status;
@@ -296,11 +311,24 @@ export class IdeogramAPI {
         // Validate Content-Type of response
         if (!contentType.includes('application/json')) {
             this.logger.warn(`Unexpected Content-Type in response: ${contentType || '(none)'}`);
-            throw new Error(`Invalid response format from API (HTTP ${response.status}, Content-Type: ${contentType || '(none)'})`);
+            this.logger.error(`Invalid response format (HTTP ${response.status}). A generation may still have run and been billed. Check before retrying.`);
+            throw new IdeogramAPIError(`Invalid response format from API (HTTP ${response.status}, Content-Type: ${contentType || '(none)'})`, { status: response.status, body: raw.toString('utf8', 0, BODY_EXCERPT_BYTES) });
         }
-        const parsed = JSON.parse(raw.toString('utf8'));
+        let parsed;
+        try {
+            parsed = JSON.parse(raw.toString('utf8'));
+        }
+        catch (error) {
+            this.logger.error(`Invalid response format (HTTP ${response.status}): body is not valid JSON. A generation may still have run and been billed. Check before retrying.`);
+            throw new IdeogramAPIError(`Invalid response format from API: body is not valid JSON (HTTP ${response.status})`, {
+                status: response.status,
+                body: raw.toString('utf8', 0, BODY_EXCERPT_BYTES),
+                cause: error,
+            });
+        }
         if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
             const got = parsed === null ? 'null' : Array.isArray(parsed) ? 'array' : typeof parsed;
+            this.logger.error(`Invalid response format (HTTP ${response.status}): expected a JSON object, got ${got}. A generation may still have run and been billed. Check before retrying.`);
             throw new IdeogramAPIError(`Invalid response format from API: expected a JSON object, got ${got} (HTTP ${response.status})`, { status: response.status, body: parsed });
         }
         // Field-level shapes are trusted, not validated: the API's documented
@@ -956,11 +984,12 @@ export class IdeogramAPI {
     }
     /**
      * Poll a generation until it completes or fails.
-     * A 429 while polling backs off (doubling the interval, up to 30s) and keeps polling.
+     * A 429 while polling backs off (doubling the interval, at least 1s and up to 30s) and keeps polling.
      *
      * @param generationId - The generation_id returned by a v2 request
      * @param options - Poll interval, overall timeout, per-poll callback
      * @returns The completed GenerationStatus (with `data`)
+     * @throws Error if `intervalMs` or `timeoutMs` is below 1
      * @throws IdeogramAPIError with `failureReason` if the generation failed,
      *   or on timeout (the generation keeps running server-side)
      *
@@ -971,6 +1000,12 @@ export class IdeogramAPI {
     async waitForGeneration(generationId, options = {}) {
         const baseInterval = options.intervalMs ?? 2000;
         const timeoutMs = options.timeoutMs ?? 600000;
+        if (!Number.isFinite(baseInterval) || baseInterval < 1) {
+            throw new Error(`intervalMs must be a number >= 1 (got ${baseInterval})`);
+        }
+        if (!Number.isFinite(timeoutMs) || timeoutMs < 1) {
+            throw new Error(`timeoutMs must be a number >= 1 (got ${timeoutMs})`);
+        }
         const deadline = Date.now() + timeoutMs;
         let interval = baseInterval;
         for (;;) {
@@ -981,7 +1016,7 @@ export class IdeogramAPI {
             }
             catch (error) {
                 if (error instanceof IdeogramAPIError && error.status === 429) {
-                    interval = Math.min(interval * 2, 30000);
+                    interval = Math.min(Math.max(interval * 2, 1000), 30000);
                     this.logger.warn(`Rate limited while polling ${generationId}; retrying in ${interval}ms`);
                 }
                 else {

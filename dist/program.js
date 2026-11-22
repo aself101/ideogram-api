@@ -37,8 +37,10 @@ import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { IdeogramAPI, extractImages, extractDescriptions, } from './api.js';
 import { getIdeogramApiKey, validateOperationParams, DEFAULT_OUTPUT_DIR, ASPECT_RATIOS, RESOLUTIONS, RENDERING_SPEEDS, STYLE_PRESETS, V4_RESOLUTIONS, V4_ASPECT_RATIOS, V4_RENDERING_SPEEDS, V4_OUTPUT_RESOLUTIONS, V45_QUALITIES, V45_BACKGROUNDS, V46_SIZES, AUTO_RESOLUTION_TIERS, AUTO_STYLE_TYPES, V2_COLOR_PALETTE_PRESETS, SVG_QUALITIES, UPSCALE_FACTORS, ASSET_TYPES, MINIMAX_H3_ASPECT_RATIOS, MINIMAX_H3_RESOLUTIONS, MINIMAX_H3_PROMPT_EXPANSION_MODES, SEEDANCE_25_ASPECT_RATIOS, SEEDANCE_25_RESOLUTIONS, } from './config.js';
-import { saveImage, saveMetadata, generateFilename, ensureDirectory, createSpinner, setLogLevel, logger, assertSquareImage, toError, } from './utils.js';
-import { executeV2, executeAsyncV2, executeGetGeneration, describeError, fetchImage, } from './cli-v2.js';
+import { saveImage, saveMetadata, generateFilename, ensureDirectory, createSpinner, claimPath, } from './cli-io.js';
+import { logger } from './logger.js';
+import { setLogLevel, assertSquareImage, toError } from './utils.js';
+import { executeV2, executeAsyncV2, executeGetGeneration, describeError, fetchImage, parseIntOption, } from './cli-v2.js';
 // ES modules __dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -271,10 +273,14 @@ ${'='.repeat(80)}
 /**
  * Download image from URL with SSRF protection.
  * Validates URL before downloading to prevent security vulnerabilities.
+ * Returns the path written (the requested one, or a suffixed variant if it was taken).
  */
 async function downloadImage(url, outputPath) {
     const buffer = await fetchImage(url);
-    await saveImage(buffer, outputPath);
+    // Never overwrite: a taken name gets a -2, -3 ... suffix; the final path is returned.
+    const claimed = await claimPath(outputPath);
+    await saveImage(buffer, claimed);
+    return claimed;
 }
 /**
  * Generic function to execute an API operation with common orchestration logic.
@@ -772,7 +778,7 @@ async function executeGenerate(options, globalOptions) {
                 resolution: options.resolution,
                 renderingSpeed: options.renderingSpeed,
                 magicPrompt: options.magicPrompt,
-                numImages: parseInt(options.numImages || '1'),
+                numImages: parseIntOption('--num-images', options.numImages) ?? 1,
             });
             const spinner = createSpinner('Generating images...');
             spinner.start();
@@ -784,8 +790,8 @@ async function executeGenerate(options, globalOptions) {
                     renderingSpeed: options.renderingSpeed,
                     magicPrompt: options.magicPrompt,
                     negativePrompt: options.negativePrompt,
-                    numImages: parseInt(options.numImages || '1'),
-                    seed: options.seed ? parseInt(options.seed) : undefined,
+                    numImages: parseIntOption('--num-images', options.numImages) ?? 1,
+                    seed: parseIntOption('--seed', options.seed),
                     colorPalette: options.colorPalette,
                     styleType: options.styleType,
                     stylePreset: options.stylePreset,
@@ -824,8 +830,8 @@ async function executeEdit(options, globalOptions) {
             image: options.image,
             mask: options.mask,
             magicPrompt: options.magicPrompt,
-            numImages: parseInt(options.numImages || '1'),
-            seed: options.seed ? parseInt(options.seed) : undefined,
+            numImages: parseIntOption('--num-images', options.numImages) ?? 1,
+            seed: parseIntOption('--seed', options.seed),
             renderingSpeed: options.renderingSpeed,
             styleType: options.styleType,
             stylePreset: options.stylePreset,
@@ -847,14 +853,14 @@ async function executeRemix(options, globalOptions) {
         apiMethodCaller: (api) => api.remix({
             prompt: options.prompt,
             image: options.image,
-            imageWeight: options.imageWeight ? parseInt(options.imageWeight) : undefined,
+            imageWeight: parseIntOption('--image-weight', options.imageWeight),
             resolution: options.resolution,
             aspectRatio: options.aspectRatio,
             renderingSpeed: options.renderingSpeed,
             magicPrompt: options.magicPrompt,
             negativePrompt: options.negativePrompt,
-            numImages: parseInt(options.numImages || '1'),
-            seed: options.seed ? parseInt(options.seed) : undefined,
+            numImages: parseIntOption('--num-images', options.numImages) ?? 1,
+            seed: parseIntOption('--seed', options.seed),
             styleType: options.styleType,
             stylePreset: options.stylePreset,
         }),
@@ -884,8 +890,8 @@ async function executeReframe(options, globalOptions) {
         apiMethodCaller: (api) => api.reframe({
             image: options.image,
             resolution: options.resolution,
-            numImages: parseInt(options.numImages || '1'),
-            seed: options.seed ? parseInt(options.seed) : undefined,
+            numImages: parseIntOption('--num-images', options.numImages) ?? 1,
+            seed: parseIntOption('--seed', options.seed),
             renderingSpeed: options.renderingSpeed,
             stylePreset: options.stylePreset,
         }),
@@ -907,8 +913,8 @@ async function executeReplaceBackground(options, globalOptions) {
             prompt: options.prompt,
             image: options.image,
             magicPrompt: options.magicPrompt,
-            numImages: parseInt(options.numImages || '1'),
-            seed: options.seed ? parseInt(options.seed) : undefined,
+            numImages: parseIntOption('--num-images', options.numImages) ?? 1,
+            seed: parseIntOption('--seed', options.seed),
             renderingSpeed: options.renderingSpeed,
             stylePreset: options.stylePreset,
         }),
@@ -943,7 +949,7 @@ async function executeDescribe(options, globalOptions) {
             const outputDir = path.join(globalOpts.outputDir, 'describe');
             await ensureDirectory(outputDir);
             const metadataFilename = generateFilename(path.basename(options.image), 'json');
-            const metadataPath = path.join(outputDir, metadataFilename);
+            const metadataPath = await claimPath(path.join(outputDir, metadataFilename));
             await saveMetadata(metadataPath, {
                 operation: 'describe',
                 timestamp: new Date().toISOString(),
@@ -973,17 +979,16 @@ async function saveResults(response, operation, promptOrName, baseOutputDir, opt
             console.log(`⚠ Image ${i + 1}/${images.length} failed safety checks; no URL returned`);
             continue;
         }
-        // Generate filename
-        const filenameBase = images.length > 1 ? `${promptOrName}-${i + 1}` : promptOrName;
-        const filename = generateFilename(filenameBase);
+        // Truncate the prompt before the index is appended, so items stay distinct
+        const filename = generateFilename(promptOrName, 'png', 50, images.length > 1 ? i + 1 : undefined);
         const imagePath = path.join(outputDir, filename);
-        // Download and save image
-        await downloadImage(image.url, imagePath);
-        console.log(`✓ Saved image ${i + 1}/${images.length}: ${imagePath}`);
+        // Download and save image (never overwriting an existing file)
+        const savedPath = await downloadImage(image.url, imagePath);
+        console.log(`✓ Saved image ${i + 1}/${images.length}: ${savedPath}`);
     }
     // Save metadata
     const metadataFilename = generateFilename(promptOrName, 'json');
-    const metadataPath = path.join(outputDir, metadataFilename);
+    const metadataPath = await claimPath(path.join(outputDir, metadataFilename));
     await saveMetadata(metadataPath, {
         operation,
         timestamp: response.created || new Date().toISOString(),

@@ -478,11 +478,12 @@ export declare class IdeogramAPI {
     getGeneration(generationId: string): Promise<GenerationStatus>;
     /**
      * Poll a generation until it completes or fails.
-     * A 429 while polling backs off (doubling the interval, up to 30s) and keeps polling.
+     * A 429 while polling backs off (doubling the interval, at least 1s and up to 30s) and keeps polling.
      *
      * @param generationId - The generation_id returned by a v2 request
      * @param options - Poll interval, overall timeout, per-poll callback
      * @returns The completed GenerationStatus (with `data`)
+     * @throws Error if `intervalMs` or `timeoutMs` is below 1
      * @throws IdeogramAPIError with `failureReason` if the generation failed,
      *   or on timeout (the generation keeps running server-side)
      *

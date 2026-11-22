@@ -78,8 +78,11 @@ export declare function getGenerationCommand(generationId: string): string;
  * redirect. 200MB cap: 8k transparent PNGs can be large.
  */
 export declare function fetchImage(url: string): Promise<Buffer>;
-/** Parse an optional integer CLI value, rejecting non-integers rather than sending NaN. */
-export declare function parseIntOption(name: string, value: string | undefined): number | undefined;
+/**
+ * Parse an optional integer CLI value, rejecting non-integers rather than sending NaN.
+ * `min`, when given, also rejects integers below it.
+ */
+export declare function parseIntOption(name: string, value: string | undefined, min?: number): number | undefined;
 /** Parse --color-palette: a preset name, or a JSON `{ name }` / `{ members }` object. */
 export declare function parseColorPalette(value: string | undefined): V2ColorPalette | undefined;
 /** Parse --asset values of the form TYPE:ID or TYPE:ID:COLLECTION. */

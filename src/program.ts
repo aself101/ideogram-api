@@ -80,17 +80,17 @@ import {
   generateFilename,
   ensureDirectory,
   createSpinner,
-  setLogLevel,
-  logger,
-  assertSquareImage,
-  toError,
-} from './utils.js';
+  claimPath,
+} from './cli-io.js';
+import { logger } from './logger.js';
+import { setLogLevel, assertSquareImage, toError } from './utils.js';
 import {
   executeV2,
   executeAsyncV2,
   executeGetGeneration,
   describeError,
   fetchImage,
+  parseIntOption,
 } from './cli-v2.js';
 import type { GlobalOptions, V2CliOptions } from './cli-v2.js';
 
@@ -411,26 +411,27 @@ ${'='.repeat(80)}
 /**
  * Download image from URL with SSRF protection.
  * Validates URL before downloading to prevent security vulnerabilities.
+ * Returns the path written (the requested one, or a suffixed variant if it was taken).
  */
-async function downloadImage(url: string, outputPath: string): Promise<void> {
+async function downloadImage(url: string, outputPath: string): Promise<string> {
   const buffer = await fetchImage(url);
-  await saveImage(buffer, outputPath);
+  // Never overwrite: a taken name gets a -2, -3 ... suffix; the final path is returned.
+  const claimed = await claimPath(outputPath);
+  await saveImage(buffer, claimed);
+  return claimed;
 }
 
 /**
  * Execute operation configuration interface.
  */
-interface ExecuteOperationConfig {
+interface ExecuteOperationConfig<R> {
   operation: string;
   spinnerMessage: string;
   successMessage: string;
   failureMessage: string;
   validateParams?: Record<string, unknown>;
-  apiMethodCaller: (api: IdeogramAPI) => Promise<GenerationResponse | DescribeResponse>;
-  resultHandler: (
-    response: GenerationResponse | DescribeResponse,
-    globalOpts: GlobalOptions
-  ) => Promise<void>;
+  apiMethodCaller: (api: IdeogramAPI) => Promise<R>;
+  resultHandler: (response: R, globalOpts: GlobalOptions) => Promise<void>;
   globalOptions: GlobalOptions;
 }
 
@@ -438,7 +439,7 @@ interface ExecuteOperationConfig {
  * Generic function to execute an API operation with common orchestration logic.
  * Reduces code duplication across all execute functions.
  */
-async function executeOperation({
+async function executeOperation<R extends GenerationResponse | DescribeResponse>({
   operation,
   spinnerMessage,
   successMessage,
@@ -447,7 +448,7 @@ async function executeOperation({
   apiMethodCaller,
   resultHandler,
   globalOptions,
-}: ExecuteOperationConfig): Promise<void> {
+}: ExecuteOperationConfig<R>): Promise<void> {
   try {
     setLogLevel(globalOptions.logLevel);
     const apiKey = getIdeogramApiKey(globalOptions.apiKey || null);
@@ -1038,7 +1039,7 @@ async function executeGenerate(
         resolution: options.resolution,
         renderingSpeed: options.renderingSpeed,
         magicPrompt: options.magicPrompt,
-        numImages: parseInt(options.numImages || '1'),
+        numImages: parseIntOption('--num-images', options.numImages) ?? 1,
       });
 
       const spinner = createSpinner('Generating images...');
@@ -1057,8 +1058,8 @@ async function executeGenerate(
             | undefined,
           magicPrompt: options.magicPrompt as 'AUTO' | 'ON' | 'OFF' | undefined,
           negativePrompt: options.negativePrompt,
-          numImages: parseInt(options.numImages || '1'),
-          seed: options.seed ? parseInt(options.seed) : undefined,
+          numImages: parseIntOption('--num-images', options.numImages) ?? 1,
+          seed: parseIntOption('--seed', options.seed),
           colorPalette: options.colorPalette,
           styleType: options.styleType as
             | 'AUTO'
@@ -1106,8 +1107,8 @@ async function executeEdit(options: EditOptions, globalOptions: GlobalOptions): 
         image: options.image,
         mask: options.mask,
         magicPrompt: options.magicPrompt as 'AUTO' | 'ON' | 'OFF' | undefined,
-        numImages: parseInt(options.numImages || '1'),
-        seed: options.seed ? parseInt(options.seed) : undefined,
+        numImages: parseIntOption('--num-images', options.numImages) ?? 1,
+        seed: parseIntOption('--seed', options.seed),
         renderingSpeed: options.renderingSpeed as
           | 'FLASH'
           | 'TURBO'
@@ -1125,7 +1126,7 @@ async function executeEdit(options: EditOptions, globalOptions: GlobalOptions): 
       }),
     resultHandler: (response, globalOpts) =>
       saveResults(
-        response as GenerationResponse,
+        response,
         'edit-v3',
         options.prompt,
         globalOpts.outputDir,
@@ -1149,7 +1150,7 @@ async function executeRemix(options: RemixOptions, globalOptions: GlobalOptions)
       api.remix({
         prompt: options.prompt,
         image: options.image,
-        imageWeight: options.imageWeight ? parseInt(options.imageWeight) : undefined,
+        imageWeight: parseIntOption('--image-weight', options.imageWeight),
         resolution: options.resolution,
         aspectRatio: options.aspectRatio,
         renderingSpeed: options.renderingSpeed as
@@ -1160,8 +1161,8 @@ async function executeRemix(options: RemixOptions, globalOptions: GlobalOptions)
           | undefined,
         magicPrompt: options.magicPrompt as 'AUTO' | 'ON' | 'OFF' | undefined,
         negativePrompt: options.negativePrompt,
-        numImages: parseInt(options.numImages || '1'),
-        seed: options.seed ? parseInt(options.seed) : undefined,
+        numImages: parseIntOption('--num-images', options.numImages) ?? 1,
+        seed: parseIntOption('--seed', options.seed),
         styleType: options.styleType as
           | 'AUTO'
           | 'GENERAL'
@@ -1173,7 +1174,7 @@ async function executeRemix(options: RemixOptions, globalOptions: GlobalOptions)
       }),
     resultHandler: (response, globalOpts) =>
       saveResults(
-        response as GenerationResponse,
+        response,
         'remix-v3',
         options.prompt,
         globalOpts.outputDir,
@@ -1209,8 +1210,8 @@ async function executeReframe(
       api.reframe({
         image: options.image,
         resolution: options.resolution,
-        numImages: parseInt(options.numImages || '1'),
-        seed: options.seed ? parseInt(options.seed) : undefined,
+        numImages: parseIntOption('--num-images', options.numImages) ?? 1,
+        seed: parseIntOption('--seed', options.seed),
         renderingSpeed: options.renderingSpeed as
           | 'FLASH'
           | 'TURBO'
@@ -1221,7 +1222,7 @@ async function executeReframe(
       }),
     resultHandler: (response, globalOpts) =>
       saveResults(
-        response as GenerationResponse,
+        response,
         'reframe-v3',
         `reframe-${options.resolution}`,
         globalOpts.outputDir,
@@ -1249,8 +1250,8 @@ async function executeReplaceBackground(
         prompt: options.prompt,
         image: options.image,
         magicPrompt: options.magicPrompt as 'AUTO' | 'ON' | 'OFF' | undefined,
-        numImages: parseInt(options.numImages || '1'),
-        seed: options.seed ? parseInt(options.seed) : undefined,
+        numImages: parseIntOption('--num-images', options.numImages) ?? 1,
+        seed: parseIntOption('--seed', options.seed),
         renderingSpeed: options.renderingSpeed as
           | 'FLASH'
           | 'TURBO'
@@ -1261,7 +1262,7 @@ async function executeReplaceBackground(
       }),
     resultHandler: (response, globalOpts) =>
       saveResults(
-        response as GenerationResponse,
+        response,
         'replace-background-v3',
         options.prompt,
         globalOpts.outputDir,
@@ -1293,7 +1294,7 @@ async function executeDescribe(
         describeModelVersion: options.describeModelVersion as 'V_2' | 'V_3' | undefined,
       }),
     resultHandler: async (response, globalOpts) => {
-      const descriptions = extractDescriptions(response as DescribeResponse);
+      const descriptions = extractDescriptions(response);
 
       console.log('\nDescriptions:\n');
       descriptions.forEach((desc, idx) => {
@@ -1304,7 +1305,7 @@ async function executeDescribe(
       const outputDir = path.join(globalOpts.outputDir, 'describe');
       await ensureDirectory(outputDir);
       const metadataFilename = generateFilename(path.basename(options.image), 'json');
-      const metadataPath = path.join(outputDir, metadataFilename);
+      const metadataPath = await claimPath(path.join(outputDir, metadataFilename));
 
       await saveMetadata(metadataPath, {
         operation: 'describe',
@@ -1353,21 +1354,19 @@ async function saveResults(
       continue;
     }
 
-    // Generate filename
-    const filenameBase = images.length > 1 ? `${promptOrName}-${i + 1}` : promptOrName;
-
-    const filename = generateFilename(filenameBase);
+    // Truncate the prompt before the index is appended, so items stay distinct
+    const filename = generateFilename(promptOrName, 'png', 50, images.length > 1 ? i + 1 : undefined);
     const imagePath = path.join(outputDir, filename);
 
-    // Download and save image
-    await downloadImage(image.url, imagePath);
+    // Download and save image (never overwriting an existing file)
+    const savedPath = await downloadImage(image.url, imagePath);
 
-    console.log(`✓ Saved image ${i + 1}/${images.length}: ${imagePath}`);
+    console.log(`✓ Saved image ${i + 1}/${images.length}: ${savedPath}`);
   }
 
   // Save metadata
   const metadataFilename = generateFilename(promptOrName, 'json');
-  const metadataPath = path.join(outputDir, metadataFilename);
+  const metadataPath = await claimPath(path.join(outputDir, metadataFilename));
 
   await saveMetadata(metadataPath, {
     operation,

@@ -23,6 +23,7 @@ import { mkdir, unlink } from 'fs/promises';
 import { dirname } from 'path';
 import { Readable, Transform } from 'stream';
 import { pipeline } from 'stream/promises';
+import { logger } from './logger.js';
 const MB = 1024 * 1024;
 /** Approximate multipart overhead per part (boundary, headers, CRLFs). */
 const PART_OVERHEAD_BYTES = 256;
@@ -94,7 +95,9 @@ export async function readBodyWithLimit(response, maxBytes) {
 /**
  * Stream a response body to a file, failing past `maxBytes`. On any failure
  * (size cap exceeded, stream error, write error) the partial file is removed
- * (best effort) and the original error is rethrown. A declared Content-Length
+ * and the original error is rethrown. If the removal itself fails (anything but
+ * ENOENT), a warning names the leftover file and the rethrown error carries its
+ * path as `partialFile`. A declared Content-Length
  * over the cap fails before the file is created.
  */
 export async function streamToFile(response, outputPath, maxBytes) {
@@ -107,7 +110,26 @@ export async function streamToFile(response, outputPath, maxBytes) {
         await pipeline(Readable.fromWeb(response.body), byteLimit(maxBytes), createWriteStream(outputPath));
     }
     catch (error) {
-        await unlink(outputPath).catch(() => undefined);
+        try {
+            await unlink(outputPath);
+        }
+        catch (unlinkError) {
+            // Nothing to clean up when the file was never created (ENOENT). Any other
+            // failure leaves a partial file behind: say so, and still throw the
+            // original error.
+            if (unlinkError?.code !== 'ENOENT') {
+                const reason = unlinkError instanceof Error ? unlinkError.message : String(unlinkError);
+                logger.warn(`Could not remove the partial download ${outputPath}: ${reason}. Delete it manually.`);
+                if (error !== null && typeof error === 'object') {
+                    try {
+                        error.partialFile = outputPath;
+                    }
+                    catch {
+                        // frozen error object: the warning above still names the file
+                    }
+                }
+            }
+        }
         throw error;
     }
 }

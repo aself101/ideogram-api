@@ -35,6 +35,9 @@ import {
   generateFilename,
   ensureDirectory,
   createSpinner,
+  claimPath,
+} from './cli-io.js';
+import {
   setLogLevel,
   downloadBuffer,
   downloadToFile,
@@ -133,13 +136,20 @@ export async function fetchImage(url: string): Promise<Buffer> {
 
 // ==================== v2 EXECUTION ====================
 
-/** Parse an optional integer CLI value, rejecting non-integers rather than sending NaN. */
-export function parseIntOption(name: string, value: string | undefined): number | undefined {
+/**
+ * Parse an optional integer CLI value, rejecting non-integers rather than sending NaN.
+ * `min`, when given, also rejects integers below it.
+ */
+export function parseIntOption(name: string, value: string | undefined, min?: number): number | undefined {
   if (value === undefined) return undefined;
   if (!/^-?\d+$/.test(value.trim())) {
     throw new Error(`${name} must be an integer (got '${value}')`);
   }
-  return Number(value);
+  const n = Number(value);
+  if (min !== undefined && n < min) {
+    throw new Error(`${name} must be at least ${min} (got '${value}')`);
+  }
+  return n;
 }
 
 /** Parse --color-palette: a preset name, or a JSON `{ name }` / `{ members }` object. */
@@ -150,7 +160,7 @@ export function parseColorPalette(value: string | undefined): V2ColorPalette | u
   try {
     parsed = JSON.parse(value);
   } catch (error) {
-    throw new Error(`--color-palette is not valid JSON: ${toError(error).message}`);
+    throw new Error(`--color-palette is not valid JSON: ${toError(error).message}`, { cause: error });
   }
   assertColorPalette(parsed);
   return parsed;
@@ -336,7 +346,7 @@ export async function executeV2(
     const numImages = parseIntOption('--num-images', options.numImages);
     const seed = parseIntOption('--seed', options.seed);
     const timeoutMs = parseIntOption('--timeout', options.timeout);
-    const pollInterval = parseIntOption('--poll-interval', options.pollInterval) ?? 2000;
+    const pollInterval = parseIntOption('--poll-interval', options.pollInterval, 1) ?? 2000;
     const colorPalette = parseColorPalette(options.colorPalette);
 
     if (options.wait && !options.async) {
@@ -521,8 +531,8 @@ export async function executeAsyncV2(
     const seed = parseIntOption('--seed', options.seed);
     const duration = parseIntOption('--duration', options.duration);
     const timeoutMs = parseIntOption('--timeout', options.timeout);
-    const pollInterval = parseIntOption('--poll-interval', options.pollInterval) ?? 5000;
-    const waitTimeout = parseIntOption('--wait-timeout', options.waitTimeout) ?? 1800000;
+    const pollInterval = parseIntOption('--poll-interval', options.pollInterval, 1) ?? 5000;
+    const waitTimeout = parseIntOption('--wait-timeout', options.waitTimeout, 1) ?? 1800000;
     const assets = parseAssets(options.asset);
 
     validateV2Params(operation, toValidationParams(operation, options, { numImages, seed, duration, assets }));
@@ -676,8 +686,8 @@ export async function executeGetGeneration(
     setLogLevel(globalOptions.logLevel);
     const apiKey = getIdeogramApiKey(globalOptions.apiKey || null);
     const api = new IdeogramAPI(apiKey, undefined, globalOptions.logLevel);
-    const pollInterval = parseIntOption('--poll-interval', options.pollInterval) ?? 2000;
-    const waitTimeout = parseIntOption('--wait-timeout', options.waitTimeout) ?? 1800000;
+    const pollInterval = parseIntOption('--poll-interval', options.pollInterval, 1) ?? 2000;
+    const waitTimeout = parseIntOption('--wait-timeout', options.waitTimeout, 1) ?? 1800000;
 
     const status = options.wait
       ? await waitWithSpinner(api, generationId, pollInterval, waitTimeout)
@@ -726,6 +736,15 @@ function mediaExtension(item: GenerationDataItem): string {
 }
 
 /**
+ * Remove the empty placeholder claimPath created when the write that should
+ * have filled it failed. Best effort: the file may already be gone (streamToFile
+ * removes its own partial output, and warns when it cannot).
+ */
+async function discardClaimed(filePath: string): Promise<void> {
+  await fs.unlink(filePath).catch(() => undefined);
+}
+
+/**
  * Download v2 results and write a metadata file. Images that failed safety
  * checks (empty url) are reported and skipped. Videos and SVGs are streamed
  * to disk; other result kinds are recorded in the metadata only.
@@ -751,74 +770,109 @@ async function saveV2Results(
   const outputDir = path.join(baseOutputDir, operation);
   await ensureDirectory(outputDir);
 
-  const saved: Array<Record<string, unknown>> = [];
-  for (let i = 0; i < items.length; i++) {
-    // GeneratedImage (sync responses) is a subset of GenerationDataItem's fields.
-    const item = items[i] as GenerationDataItem;
-    const label = `${i + 1}/${items.length}`;
-    const base = items.length > 1 ? `${promptOrName}-${i + 1}` : promptOrName;
-    const kind = item.object_type;
+  // Write the metadata first, with every item's URL, so a failed download
+  // cannot lose the generation id or the URLs of the items not yet fetched.
+  // It is rewritten with the saved paths once the downloads finish.
+  const metadataPath = await claimPath(path.join(outputDir, generateFilename(promptOrName, 'json')));
+  const writeMetadata = (saved: Array<Record<string, unknown>>) =>
+    saveMetadata(metadataPath, {
+      operation,
+      timestamp,
+      generationId: meta.generationId,
+      seed: meta.seed,
+      generationKind: meta.generationKind,
+      usageCostUsdMicros: meta.usageCostUsdMicros,
+      parameters: meta.parameters,
+      response: { itemCount: items.length, items: saved },
+    });
+  const timestamp = new Date().toISOString();
+  await writeMetadata(
+    items.map((raw, i) => {
+      const item = raw as GenerationDataItem;
+      return { index: i + 1, objectType: item.object_type, url: item.url, assetId: item.asset_id, saved: false };
+    })
+  );
 
-    if (kind === 'video.generation' || kind === 'svg.generation') {
-      const noun = kind === 'video.generation' ? 'video' : 'SVG';
-      if (!item.url) {
-        console.log(`⚠ ${noun} ${label} has no URL (it may have failed safety checks)`);
-        saved.push({ index: i + 1, objectType: kind, assetId: item.asset_id });
+  const saved: Array<Record<string, unknown>> = [];
+  try {
+    for (let i = 0; i < items.length; i++) {
+      // GeneratedImage (sync responses) is a subset of GenerationDataItem's fields.
+      const item = items[i] as GenerationDataItem;
+      const label = `${i + 1}/${items.length}`;
+      const index = items.length > 1 ? i + 1 : undefined;
+      const kind = item.object_type;
+
+      if (kind === 'video.generation' || kind === 'svg.generation') {
+        const noun = kind === 'video.generation' ? 'video' : 'SVG';
+        if (!item.url) {
+          console.log(`⚠ ${noun} ${label} has no URL (it may have failed safety checks)`);
+          saved.push({ index: i + 1, objectType: kind, assetId: item.asset_id });
+          continue;
+        }
+        const filePath = await claimPath(
+          path.join(outputDir, generateFilename(promptOrName, mediaExtension(item), 50, index))
+        );
+        try {
+          await downloadToFile(item.url, filePath);
+        } catch (error) {
+          await discardClaimed(filePath);
+          throw error;
+        }
+        console.log(`✓ Saved ${noun} ${label}: ${filePath}`);
+        saved.push({
+          index: i + 1,
+          objectType: kind,
+          path: filePath,
+          url: item.url,
+          assetId: item.asset_id,
+          resolution: item.resolution,
+          aspectRatio: item.aspect_ratio,
+          duration: item.duration,
+          width: item.width,
+          height: item.height,
+          finalPrompt: item.prompt,
+        });
         continue;
       }
-      const filePath = path.join(outputDir, generateFilename(base, mediaExtension(item)));
-      await downloadToFile(item.url, filePath);
-      console.log(`✓ Saved ${noun} ${label}: ${filePath}`);
+      if (kind && !kind.startsWith('image')) {
+        console.log(`⚠ Item ${label} is a ${kind}; not downloaded (see metadata)`);
+        saved.push({ index: i + 1, objectType: kind, url: item.url });
+        continue;
+      }
+      if (item.is_image_safe === false || !item.url) {
+        console.log(`⚠ Image ${label} failed safety checks; no URL returned`);
+        saved.push({ index: i + 1, isImageSafe: false, resolution: item.resolution, seed: item.seed });
+        continue;
+      }
+      const buffer = await fetchImage(item.url);
+      const imagePath = await claimPath(
+        path.join(outputDir, generateFilename(promptOrName, extensionFor(buffer), 50, index))
+      );
+      try {
+        await saveImage(buffer, imagePath);
+      } catch (error) {
+        await discardClaimed(imagePath);
+        throw error;
+      }
+      console.log(`✓ Saved image ${label}: ${imagePath}`);
       saved.push({
         index: i + 1,
-        objectType: kind,
-        path: filePath,
+        path: imagePath,
         url: item.url,
-        assetId: item.asset_id,
         resolution: item.resolution,
-        aspectRatio: item.aspect_ratio,
-        duration: item.duration,
-        width: item.width,
-        height: item.height,
+        seed: item.seed,
+        isImageSafe: item.is_image_safe,
         finalPrompt: item.prompt,
       });
-      continue;
     }
-    if (kind && !kind.startsWith('image')) {
-      console.log(`⚠ Item ${label} is a ${kind}; not downloaded (see metadata)`);
-      saved.push({ index: i + 1, objectType: kind, url: item.url });
-      continue;
-    }
-    if (item.is_image_safe === false || !item.url) {
-      console.log(`⚠ Image ${label} failed safety checks; no URL returned`);
-      saved.push({ index: i + 1, isImageSafe: false, resolution: item.resolution, seed: item.seed });
-      continue;
-    }
-    const buffer = await fetchImage(item.url);
-    const imagePath = path.join(outputDir, generateFilename(base, extensionFor(buffer)));
-    await saveImage(buffer, imagePath);
-    console.log(`✓ Saved image ${label}: ${imagePath}`);
-    saved.push({
-      index: i + 1,
-      path: imagePath,
-      url: item.url,
-      resolution: item.resolution,
-      seed: item.seed,
-      isImageSafe: item.is_image_safe,
-      finalPrompt: item.prompt,
-    });
+  } catch (error) {
+    console.error(
+      `✗ Download failed after ${saved.length}/${items.length} item(s). ` +
+        `Generation id: ${meta.generationId}. Result URLs are in ${metadataPath}`
+    );
+    throw error;
   }
 
-  const metadataPath = path.join(outputDir, generateFilename(promptOrName, 'json'));
-  await saveMetadata(metadataPath, {
-    operation,
-    timestamp: new Date().toISOString(),
-    generationId: meta.generationId,
-    seed: meta.seed,
-    generationKind: meta.generationKind,
-    usageCostUsdMicros: meta.usageCostUsdMicros,
-    parameters: meta.parameters,
-    response: { itemCount: items.length, items: saved },
-  });
+  await writeMetadata(saved);
   console.log(`✓ Saved metadata: ${metadataPath}`);
 }

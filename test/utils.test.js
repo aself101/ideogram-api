@@ -16,12 +16,9 @@ import {
   validateImagePath,
   loadImageAsBuffer,
   buildFormData,
-  generateFilename,
-  saveImage,
-  saveMetadata,
-  ensureDirectory,
   assertSquareImage
 } from '../src/utils.js';
+import { generateFilename, saveImage, saveMetadata, ensureDirectory } from '../src/cli-io.js';
 import { redactApiKey } from '../src/config.js';
 import { writeFileSync, unlinkSync, rmdirSync, existsSync, mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';

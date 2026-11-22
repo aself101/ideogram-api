@@ -37,7 +37,9 @@ export declare function readBodyWithLimit(response: Response, maxBytes: number):
 /**
  * Stream a response body to a file, failing past `maxBytes`. On any failure
  * (size cap exceeded, stream error, write error) the partial file is removed
- * (best effort) and the original error is rethrown. A declared Content-Length
+ * and the original error is rethrown. If the removal itself fails (anything but
+ * ENOENT), a warning names the leftover file and the rethrown error carries its
+ * path as `partialFile`. A declared Content-Length
  * over the cap fails before the file is created.
  */
 export declare function streamToFile(response: Response, outputPath: string, maxBytes: number): Promise<void>;
