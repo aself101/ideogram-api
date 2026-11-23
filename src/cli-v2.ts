@@ -106,6 +106,9 @@ export interface V2CliOptions {
   waitTimeout?: string;
 }
 
+/** Said once for a failed request that may have run: an API 5xx, or no answer at all. */
+const BILLING_NOTE = 'This request may have run and been billed. Check your usage before retrying.';
+
 /**
  * Message for a failed command. Network errors can arrive with a bare
  * message ("fetch failed", "Error") and the real reason on `cause`, so append
@@ -129,6 +132,10 @@ export function describeError(err: Error & { code?: string }): string {
  * ID goes after `--` (found live 2026-11-22: -uaWvHfERk65rkfjaocs9w).
  */
 export function getGenerationCommand(generationId: string): string {
+  // Defensive: an id that is not a string (a malformed response) must not crash the report.
+  if (typeof generationId !== 'string' || generationId === '') {
+    return 'ideogram get-generation <generation-id> --wait';
+  }
   return generationId.startsWith('-')
     ? `ideogram get-generation --wait -- ${generationId}`
     : `ideogram get-generation ${generationId} --wait`;
@@ -136,14 +143,30 @@ export function getGenerationCommand(generationId: string): string {
 
 /**
  * Print a failed command's error, and for a failed wait the command that
- * resumes it. A generation that was submitted keeps running (and stays billed)
+ * resumes it, or for any other error that may have been billed (possiblyBilled)
+ * the billing note. A generation that was submitted keeps running (and stays billed)
  * after a polling failure, so the error line is followed by how to pick it up.
  * A generation the API reported as failed has nothing to resume.
  */
-export function reportCommandError(err: Error & { generationId?: unknown; failureReason?: unknown }): void {
-  console.error(`\n✗ Error: ${describeError(err)}\n`);
-  if (typeof err.generationId === 'string' && err.generationId && err.failureReason === undefined) {
-    console.error(`  The generation may still complete. Resume with: ${getGenerationCommand(err.generationId)}\n`);
+export function reportCommandError(
+  err: Error & {
+    generationId?: unknown;
+    failureReason?: unknown;
+    generationStatus?: unknown;
+    possiblyBilled?: unknown;
+  }
+): void {
+  const described = describeError(err);
+  console.error(`\n✗ Error: ${described}\n`);
+  const resumable =
+    typeof err.generationId === 'string' &&
+    err.generationId !== '' &&
+    err.failureReason === undefined &&
+    err.generationStatus !== 'failed';
+  if (resumable) {
+    console.error(`  The generation may still complete. Resume with: ${getGenerationCommand(err.generationId as string)}\n`);
+  } else if (err.possiblyBilled === true && !described.includes('may have run and been billed')) {
+    console.error(`  ${BILLING_NOTE}\n`);
   }
 }
 
@@ -309,6 +332,45 @@ async function preflightV2Images(operation: V2OperationKey, options: V2CliOption
   }
 }
 
+/**
+ * A response that has neither results nor a generation id (a dry run answered
+ * with something that is not a price quote and not a generation): write it to
+ * a metadata file so nothing that came back is lost, print where, and fail.
+ * Never reached with a string generation_id or with data.
+ */
+async function saveRawResult(
+  result: unknown,
+  operation: string,
+  name: string,
+  baseOutputDir: string,
+  parameters: Record<string, unknown>
+): Promise<never> {
+  const outputDir = path.join(baseOutputDir, operation);
+  let claimed: string | undefined;
+  try {
+    await ensureDirectory(outputDir);
+    claimed = await claimPath(path.join(outputDir, generateFilename(name, 'json')));
+    await saveMetadata(claimed, {
+      operation,
+      timestamp: new Date().toISOString(),
+      parameters,
+      response: result,
+    });
+  } catch (error) {
+    if (claimed) await discardFile(claimed, 'the unfinished metadata file');
+    console.error(`✗ The raw response could not be written under ${outputDir}: ${toError(error).message}`);
+    throw new Error(
+      `The API answered with neither results nor a generation id, for a request that may have been billed. ${BILLING_NOTE}`,
+      { cause: error }
+    );
+  }
+  console.log(`✓ Saved the raw response: ${claimed}`);
+  throw new Error(
+    `The API answered with neither results nor a generation id, for a request that may have been billed. ${BILLING_NOTE} ` +
+      `The raw response is in ${claimed}`
+  );
+}
+
 /** Final error of a --dry-run that was answered with a real result. */
 const DRY_RUN_BILLED_ERROR =
   'The --dry-run request returned a real result instead of a price quote: it was NOT a dry run and may have been billed. ' +
@@ -316,15 +378,20 @@ const DRY_RUN_BILLED_ERROR =
 
 /**
  * Loud warning, printed before the unexpected result is saved or listed.
- * `hasData`: the response carries results (saved below); otherwise only the
- * generation id (async, listed below).
+ * `where`: 'saved' when results will be saved below, 'listed' when only the
+ * generation id will be printed (async without --wait), 'raw' when the
+ * response has neither, so the raw response itself is saved.
  */
-function warnDryRunBilled(hasData: boolean): void {
+function warnDryRunBilled(where: 'saved' | 'listed' | 'raw'): void {
+  const next =
+    where === 'saved'
+      ? 'The result is saved below'
+      : where === 'listed'
+        ? 'The generation id is listed below'
+        : 'The raw response is saved below';
   console.error(
     '\n⚠ WARNING: --dry-run was requested but the API returned a real result, not a price quote.\n' +
-      `  The request may have run and been billed. ${
-        hasData ? 'The result is saved below' : 'The generation id is listed below'
-      }; check your usage.\n`
+      `  The request may have run and been billed. ${next}; check your usage.\n`
   );
 }
 
@@ -540,10 +607,16 @@ export async function executeV2(
       console.log('\n✓ Done!\n');
       return;
     }
-    if (dryRunIgnored) warnDryRunBilled(Boolean(result.data) || Boolean(options.wait));
+    const rawOnly = !result.data && typeof result.generation_id !== 'string';
+    if (dryRunIgnored) {
+      warnDryRunBilled(rawOnly ? 'raw' : result.data || options.wait ? 'saved' : 'listed');
+    }
 
     const parameters = { ...options };
     const name = options.prompt ?? 'upscale';
+    if (rawOnly) {
+      await saveRawResult(result, operation, name, globalOptions.outputDir, parameters);
+    }
     const generationKind = 'generation_kind' in result ? result.generation_kind : undefined;
     if ('width' in result) {
       console.log(`Output: ${result.width}x${result.height}`);
@@ -703,8 +776,12 @@ export async function executeAsyncV2(
       console.log('\n✓ Done!\n');
       return;
     }
-    if (dryRunIgnored) warnDryRunBilled(Boolean(options.wait));
+    const rawOnly = typeof result.generation_id !== 'string';
+    if (dryRunIgnored) warnDryRunBilled(rawOnly ? 'raw' : options.wait ? 'saved' : 'listed');
 
+    if (rawOnly) {
+      await saveRawResult(result, operation, options.prompt, globalOptions.outputDir, { ...options });
+    }
     console.log(`Generation accepted: ${result.generation_id}`);
     if (options.webhookUrl) {
       console.log(`Ideogram will POST the result to ${options.webhookUrl}`);
@@ -996,6 +1073,18 @@ async function saveV2Results(
     throw error;
   }
 
-  await writeMetadata(metadataPath, saved);
+  try {
+    await writeMetadata(metadataPath, saved);
+  } catch (error) {
+    // Every file is on disk; only the final rewrite failed. Say so, so the caller does not pay again.
+    const files = saved.map((entry) => entry.path).filter((p): p is string => typeof p === 'string');
+    throw new Error(
+      `The result was generated and every file was saved${files.length ? ` (${files.join(', ')})` : ''}, ` +
+        `but the final update of ${metadataPath} failed: ${toError(error).message}. ` +
+        `${metadataPath} still holds the earlier record (generation id and result URLs, entries not marked saved). ` +
+        'Do not retry: nothing was lost.',
+      { cause: error }
+    );
+  }
   console.log(`✓ Saved metadata: ${metadataPath}`);
 }

@@ -29,7 +29,7 @@
  *   ideogram seedance-image-to-video --prompt "waves roll in" --image beach.png --wait
  *
  *   ideogram get-generation <generation_id> --wait
- *   (any v2 command) --dry-run   price the request without running or billing it
+ *   (any v2 command) --dry-run   price the request without running it (the library checks that a price quote came back)
  */
 import { Command } from 'commander';
 /**

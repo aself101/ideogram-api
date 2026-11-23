@@ -73,7 +73,9 @@ describe('IdeogramAPI._request on fetch', () => {
     fetchMock.mockReturnValue(Promise.resolve(fakeResponse(502, 'Bad Gateway', 'text/plain')));
     const err = await api.generateV4({ prompt: 'x' }).catch((e) => e);
     expect(err.status).toBe(502);
-    expect(err.message).toBe('API error (502): Request failed with status code 502');
+    expect(err.message).toBe(
+      'API error (502): Request failed with status code 502 The request may have run and been billed. Check your usage before retrying.'
+    );
     expect(err.body).toBe('Bad Gateway');
   });
 

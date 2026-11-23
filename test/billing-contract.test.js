@@ -425,9 +425,8 @@ describe('item 6: messages never imply a billed GET, and a save failure is not a
 // ------------------------------------------------------------ 7. SSRF ranges
 describe('item 7: SSRF block list covers transition and documentation ranges', () => {
   const blocked = [
-    ['NAT64', 'https://[64:ff9b::808:808]/a.png'],
+    // NAT64 (64:ff9b::/96) and 6to4 (2002::/16) are judged by their embedded IPv4: see final-fixes.test.js.
     ['local-use NAT64', 'https://[64:ff9b:1::808:808]/a.png'],
-    ['6to4', 'https://[2002:808:808::1]/a.png'],
     ['IPv4-translated (SIIT)', 'https://[::ffff:0:808:808]/a.png'],
     ['Teredo', 'https://[2001:0:4136:e378:8000:63bf:3fff:fdd2]/a.png'],
     ['IPv6 documentation', 'https://[2001:db8::1]/a.png'],

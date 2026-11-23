@@ -59,6 +59,13 @@ export declare class IdeogramAPIError extends Error {
     /** Polling: the generation being waited on, so a failed wait can be resumed. */
     readonly generationId?: string;
     /**
+     * Polling: the status string of a generation that finished unsuccessfully
+     * ('failed'). Set only when the API reported it, so a failed generation is
+     * told apart from a poll that failed (which can be resumed) even when the
+     * API sent no failure_reason.
+     */
+    readonly generationStatus?: string;
+    /**
      * Code 'EDRYRUNIGNORED': the parsed response the API returned instead of a
      * price quote, so a caller can still save or list what was billed.
      */
@@ -72,6 +79,7 @@ export declare class IdeogramAPIError extends Error {
         code?: string;
         possiblyBilled?: boolean;
         generationId?: string;
+        generationStatus?: string;
         result?: unknown;
         cause?: unknown;
     });

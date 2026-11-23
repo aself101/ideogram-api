@@ -26,7 +26,7 @@
 import winston from 'winston';
 import { formDataSize, readBodyWithLimit, describeNetworkError, describeValue, assertTimerMs, ResponseTooLargeError, } from './http.js';
 import { BASE_URL, ENDPOINTS, redactApiKey } from './config.js';
-import { buildFormData, loadImageAsBuffer, loadAudioAsBuffer, assertSquareImage } from './utils.js';
+import { buildFormData, loadImageAsBuffer, loadAudioAsBuffer, assertSquareImage, toError } from './utils.js';
 /** Default request timeout for v1 (Ideogram 3.0) endpoints, unchanged since 1.0. */
 const V1_TIMEOUT_MS = 120000;
 /**
@@ -95,6 +95,13 @@ export class IdeogramAPIError extends Error {
     /** Polling: the generation being waited on, so a failed wait can be resumed. */
     generationId;
     /**
+     * Polling: the status string of a generation that finished unsuccessfully
+     * ('failed'). Set only when the API reported it, so a failed generation is
+     * told apart from a poll that failed (which can be resumed) even when the
+     * API sent no failure_reason.
+     */
+    generationStatus;
+    /**
      * Code 'EDRYRUNIGNORED': the parsed response the API returned instead of a
      * price quote, so a caller can still save or list what was billed.
      */
@@ -104,6 +111,7 @@ export class IdeogramAPIError extends Error {
         this.code = details.code;
         this.possiblyBilled = details.possiblyBilled ?? false;
         this.generationId = details.generationId;
+        this.generationStatus = details.generationStatus;
         this.result = details.result;
         this.name = 'IdeogramAPIError';
         this.status = details.status;
@@ -315,7 +323,10 @@ export class IdeogramAPI {
                 // A 5xx may be a failure after the work started; a 4xx answer was decided before any work.
                 possiblyBilled: billable && status >= 500,
             };
-            this.logger.error(`API request failed (${status}): ${message}`);
+            const serverBilledNote = details.possiblyBilled
+                ? ' The request may have run and been billed. Check your usage before retrying.'
+                : '';
+            this.logger.error(`API request failed (${status}): ${message}${serverBilledNote}`);
             // Map HTTP status codes to user-friendly errors
             if (status === 400) {
                 throw new IdeogramAPIError(`Invalid input: ${message}`, details);
@@ -348,7 +359,7 @@ export class IdeogramAPI {
                     ? `Operation failed (HTTP ${status}). The request may have run and been billed. Check your usage before retrying.`
                     : `Operation failed (HTTP ${status}). Please try again.`, details);
             }
-            throw new IdeogramAPIError(`API error (${status}): ${message}`, details);
+            throw new IdeogramAPIError(`API error (${status}): ${message}${serverBilledNote}`, details);
         }
         // Validate Content-Type of response
         if (!contentType.includes('application/json')) {
@@ -1103,12 +1114,24 @@ export class IdeogramAPI {
                 }
             }
             if (status) {
-                options.onPoll?.(status);
+                try {
+                    options.onPoll?.(status);
+                }
+                catch (error) {
+                    // The generation was already submitted and billed: a throwing callback must not hide its id.
+                    throw new IdeogramAPIError(`onPoll callback threw while waiting for generation ${generationId} (it may still complete; poll getGeneration later): ${toError(error).message}`, { generationId, possiblyBilled: true, cause: error });
+                }
                 if (status.status === 'completed') {
                     return status;
                 }
                 if (status.status === 'failed') {
-                    throw new IdeogramAPIError(`Generation ${generationId} failed${status.failure_reason ? `: ${status.failure_reason}` : ''}`, { failureReason: status.failure_reason, body: status, generationId, possiblyBilled: true });
+                    throw new IdeogramAPIError(`Generation ${generationId} failed${status.failure_reason ? `: ${status.failure_reason}` : ''}`, {
+                        failureReason: status.failure_reason,
+                        body: status,
+                        generationId,
+                        generationStatus: status.status,
+                        possiblyBilled: true,
+                    });
                 }
             }
             if (Date.now() + interval > deadline) {

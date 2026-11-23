@@ -30,7 +30,7 @@
  *   ideogram seedance-image-to-video --prompt "waves roll in" --image beach.png --wait
  *
  *   ideogram get-generation <generation_id> --wait
- *   (any v2 command) --dry-run   price the request without running or billing it
+ *   (any v2 command) --dry-run   price the request without running it (the library checks that a price quote came back)
  */
 
 import { Command } from 'commander';
@@ -91,6 +91,7 @@ import {
   executeAsyncV2,
   executeGetGeneration,
   describeError,
+  reportCommandError,
   fetchImage,
   parseIntOption,
 } from './cli-v2.js';
@@ -129,6 +130,7 @@ function getVersion(): string {
  */
 interface GenerateOptions {
   prompt?: string[];
+  allowSingleWordPrompts?: boolean;
   resolution?: string;
   aspectRatio?: string;
   renderingSpeed?: string;
@@ -489,8 +491,7 @@ async function executeOperation<R extends GenerationResponse | DescribeResponse>
     await resultHandler(response, globalOptions);
     console.log('\n✓ Done!\n');
   } catch (error) {
-    const err = toError(error);
-    console.error(`\n✗ Error: ${describeError(err)}\n`);
+    reportCommandError(toError(error));
     process.exit(1);
   }
 }
@@ -510,13 +511,23 @@ export function createProgram(): Command {
     .option('--api-key <key>', 'Ideogram API key')
     .option('-o, --output-dir <path>', 'Output directory', DEFAULT_OUTPUT_DIR)
     .option('--log-level <level>', 'Logging level (debug, info, warn, error)', 'info')
-    .option('--examples', 'Show usage examples');
+    .option('--examples', 'Show usage examples')
+    // Set on the root before any subcommand exists: commander copies it into each one at
+    // creation. Left at its default, `generate-v46 -p A fox runs` sends (and bills) "A".
+    .allowExcessArguments(false);
 
   // GENERATE command
   program
     .command('generate')
     .description('Generate images with Ideogram 3.0')
-    .option('-p, --prompt <text...>', 'Generation prompt(s) (required)')
+    .option(
+      '-p, --prompt <text...>',
+      'Generation prompt(s) (required); quote each prompt: -p "a red fox" "a blue owl" makes two generations, -p a red fox makes three'
+    )
+    .option(
+      '--allow-single-word-prompts',
+      'Allow several prompts that are each a single word (otherwise refused as a likely unquoted prompt)'
+    )
     .option('-r, --resolution <size>', 'Image resolution (e.g., 1024x1024)')
     .option('-a, --aspect-ratio <ratio>', 'Aspect ratio (e.g., 1x1, 16x9)')
     .option(
@@ -608,7 +619,7 @@ export function createProgram(): Command {
     .requiredOption('-i, --image <path>', 'Input image path (required, max 50MB)')
     .option('--upscale-factor <factor>', `Enlargement (${UPSCALE_FACTORS.join(', ')}; default x2); output is capped at 8192px per side`)
     .option('--seed <number>', 'Random seed (0-2147483647)')
-    .option('--dry-run', 'Validate and price the request without running or billing it')
+    .option('--dry-run', 'Price the request without running it (the library checks that a price quote came back)')
     .option('--async', 'Return a generation_id immediately instead of waiting')
     .option('--wait', 'With --async: poll until done, then download')
     .option('--poll-interval <ms>', 'Poll interval for --wait (ms)', '2000')
@@ -638,7 +649,7 @@ export function createProgram(): Command {
       .option('-n, --num-images <number>', 'Number of images (1-8)')
       .option('--seed <number>', 'Random seed (0-2147483647)')
       .option('--magic-prompt <mode>', 'Magic prompt (auto, on, off)')
-      .option('--dry-run', 'Validate and price the request without running or billing it')
+      .option('--dry-run', 'Price the request without running it (the library checks that a price quote came back)')
       .option('--async', 'Return a generation_id immediately instead of waiting')
       .option('--wait', 'With --async: poll until done, then download')
       .option('--poll-interval <ms>', 'Poll interval for --wait (ms)', '2000')
@@ -760,7 +771,7 @@ export function createProgram(): Command {
   function addAsyncOptions(cmd: Command): Command {
     return cmd
       .option('--webhook-url <url>', 'HTTPS URL Ideogram POSTs the finished result to')
-      .option('--dry-run', 'Validate and price the request without running or billing it')
+      .option('--dry-run', 'Price the request without running it (the library checks that a price quote came back)')
       .option('--wait', 'Poll until done, then download the results')
       .option('--poll-interval <ms>', 'Poll interval for --wait (ms)', '5000')
       .option('--wait-timeout <ms>', 'Give up waiting after this many ms (the job keeps running)', '1800000')
@@ -1046,6 +1057,13 @@ async function executeGenerate(
     const api = new IdeogramAPI(apiKey, undefined, globalOptions.logLevel);
 
     const prompts = Array.isArray(options.prompt) ? options.prompt : [options.prompt];
+    // -p is variadic: an unquoted prompt (-p a red fox) is one paid generation per word.
+    if (prompts.length > 1 && !options.allowSingleWordPrompts && prompts.every((p) => !/\s/.test(p.trim()))) {
+      throw new Error(
+        `${prompts.length} prompts, each a single word (${prompts.map((p) => `"${p}"`).join(', ')}): ` +
+          'looks like an unquoted prompt; quote it, or pass --allow-single-word-prompts'
+      );
+    }
     logger.info(`Processing ${prompts.length} prompt(s)`);
 
     for (let i = 0; i < prompts.length; i++) {
@@ -1106,8 +1124,7 @@ async function executeGenerate(
 
     console.log(`\n✓ All done! Processed ${prompts.length} prompt(s)\n`);
   } catch (error) {
-    const err = toError(error);
-    console.error(`\n✗ Error: ${describeError(err)}\n`);
+    reportCommandError(toError(error));
     process.exit(1);
   }
 }
@@ -1328,13 +1345,19 @@ async function executeDescribe(
       const metadataFilename = generateFilename(path.basename(options.image), 'json');
       const metadataPath = await claimPath(path.join(outputDir, metadataFilename));
 
-      await saveMetadata(metadataPath, {
-        operation: 'describe',
-        timestamp: new Date().toISOString(),
-        image: options.image,
-        parameters: options,
-        descriptions,
-      });
+      try {
+        await saveMetadata(metadataPath, {
+          operation: 'describe',
+          timestamp: new Date().toISOString(),
+          image: options.image,
+          parameters: options,
+          descriptions,
+        });
+      } catch (error) {
+        // The empty placeholder claimPath made would otherwise be left behind.
+        await discardFile(metadataPath, 'the unfinished metadata file');
+        throw error;
+      }
 
       console.log(`✓ Saved metadata: ${metadataPath}\n`);
     },
@@ -1454,7 +1477,19 @@ async function saveResults(
     throw error;
   }
 
-  await writeMetadata(metadataPath, savedPaths);
+  try {
+    await writeMetadata(metadataPath, savedPaths);
+  } catch (error) {
+    // Every file is on disk; only the final rewrite failed. Say so, so the caller does not pay again.
+    const files = [...savedPaths.values()];
+    throw new Error(
+      `The result was generated and every file was saved${files.length ? ` (${files.join(', ')})` : ''}, ` +
+        `but the final update of ${metadataPath} failed: ${toError(error).message}. ` +
+        `${metadataPath} still holds the earlier record (result URLs, entries without paths). ` +
+        'Do not retry: nothing was lost.',
+      { cause: error }
+    );
+  }
 
   console.log(`✓ Saved metadata: ${metadataPath}`);
   console.log(`✓ Generated ${images.length} image(s) successfully`);

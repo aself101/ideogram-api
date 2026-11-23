@@ -84,7 +84,7 @@ The Ideogram API provides access to state-of-the-art image generation and manipu
 - **Dry runs** - Every v2 call accepts `dryRun: true` (`--dry-run`): the request is validated and priced, and nothing is generated or billed. The library checks this: see [Dry runs](#dry-runs-price-before-you-spend)
 - **62 Style Presets** - More artistic styles than any other service
 - **Synchronous by default** - Ideogram 3.0 and the v2 image endpoints return results directly; SVG and video return a `generation_id` to poll (`waitForGeneration`, or `--wait` on the CLI)
-- **Production Security** - API key redaction, error sanitization, HTTPS enforcement, comprehensive SSRF protection (including IPv4-mapped IPv6 and NAT64/6to4/Teredo bypass prevention, checked again on every download redirect)
+- **Production Security** - API key redaction, error sanitization, HTTPS enforcement, comprehensive SSRF protection (including IPv4-mapped IPv6 and NAT64/6to4 unwrapping and Teredo bypass prevention, checked again on every download redirect)
 - **DoS Prevention** - Request timeouts (120s v1 API, 300s v2 API, 60s image downloads), file size limits, redirect limits
 - **DNS Resolution Check** - Refuses hostnames where any resolved address is internal or reserved; the connection is not pinned to the checked address, so DNS rebinding between check and download is not prevented
 - **Parameter Validation** - The CLI validates parameters before API calls; library v2 calls are unvalidated unless you call `validateV2Params`
@@ -322,6 +322,7 @@ Failures throw `IdeogramAPIError` (a subclass of `Error`):
 - `status`: the HTTP status, when the API answered.
 - `rejectReason` / `maxInflightRequests`: why a 402 or 429 was refused (`insufficient_funds`, `inflight_limit`, ...).
 - `failureReason`: from `waitForGeneration`, why an async generation failed (e.g. `content_policy_violation`).
+- `generationStatus`: from `waitForGeneration`, `'failed'` when the API reported the generation as failed (set even when it sent no `failureReason`). A failed generation has nothing to resume.
 - `code`: set when **no HTTP response arrived** (e.g. `ECONNRESET`, or `ETIMEDOUT` for a timeout).
 - `possiblyBilled`: `true` when the request was sent and the outcome is unknown or failed after sending (no response, unreadable or malformed body, too-large body, 5xx); `false` for 4xx and anything rejected before sending. It is also `true` for **every** error from `waitForGeneration` (a poll failure, the wait timeout, a failed generation), because the generation was already submitted.
 - `generationId`: set on errors from `waitForGeneration`. Resume polling with `getGeneration(id)` or `waitForGeneration(id)`; never resubmit. The CLI prints the resume command (`ideogram get-generation <id> --wait`, or `ideogram get-generation --wait -- <id>` when the id starts with `-`). An expired wait reports "Timed out after ..." rather than a network error.
@@ -330,7 +331,8 @@ Failures throw `IdeogramAPIError` (a subclass of `Error`):
 try { await api.waitForGeneration(id); }
 catch (e) {
   if (!(e instanceof IdeogramAPIError)) throw e;
-  if (e.generationId) { /* already submitted: resume with api.waitForGeneration(e.generationId) */ }
+  if (e.generationStatus === 'failed') { /* the API reported it failed: nothing to resume; do not retry blindly, check usage */ }
+  else if (e.generationId) { /* already submitted: resume with api.waitForGeneration(e.generationId) */ }
   else if (e.possiblyBilled) { /* check usage before retrying */ }
   else { /* safe to fix and retry */ }
 }
@@ -690,7 +692,7 @@ ideogram <operation> [options]
 ```bash
 --upscale-factor <x2|x4|x8>  Enlargement (default: x2); output is capped at 8192px per side
 --seed <number>              Random seed
---dry-run                    Price the request without running or billing it
+--dry-run                    Price the request without running it (the library checks that a price quote came back)
 --async [--wait]             Return a generation_id at once; --wait polls and downloads
 ```
 
@@ -1149,7 +1151,7 @@ All image URLs are validated before processing to prevent attacks:
 - **Private IP ranges**: `10.x`, `192.168.x`, `172.16-31.x`, `169.254.x`
 - **Cloud metadata endpoints**: `169.254.169.254`, `metadata.google.internal`
 - **IPv4-Mapped IPv6 bypass prevention**: Detects `[::ffff:127.0.0.1]` attempts
-- **Reserved ranges**: Addresses are parsed, so IPv4-mapped IPv6 in any spelling and unspecified, unique-local, link-local, CGNAT, NAT64, 6to4, IPv4-translated, Teredo, documentation and other reserved ranges are refused
+- **Reserved ranges**: Addresses are parsed, so IPv4-mapped IPv6 in any spelling and unspecified, unique-local, link-local, CGNAT, local-use NAT64 (`64:ff9b:1::/48`), IPv4-translated, Teredo, documentation and other reserved ranges are refused. NAT64 (`64:ff9b::/96`) and 6to4 (`2002::/16`) addresses are judged by the IPv4 address they embed, so the synthesized address a DNS64 network returns for a public host is accepted and one that embeds a private or metadata address is refused
 - **DNS resolution check**: Resolves the hostname and refuses it if any address it resolves to is blocked. The connection is not pinned to the checked address, so a host that changes its DNS answer between the check and the download (DNS rebinding) is not prevented
 
 ### Image File Validation
@@ -1214,7 +1216,7 @@ try {
 - **429 Too Many Requests**: Rate limit exceeded; on v2, `error.rejectReason` says which limit
 - **500 Internal Server Error**: API server error
 
-See [Errors](#errors) for the `IdeogramAPIError` fields.
+See [Errors](#errors) for the `IdeogramAPIError` fields. When a failed request may have run (`possiblyBilled`), the CLI prints "This request may have run and been billed. Check your usage before retrying." (for a failed wait with a generation id it prints the resume command instead).
 
 ### Error Messages
 
@@ -1508,6 +1510,8 @@ ideogram generate \
 
 Images are generated sequentially with organized output.
 
+`--prompt` takes one or more values, so **quote each prompt**: `--prompt "a red fox" "a blue owl"` makes two paid generations, while an unquoted `--prompt a red fox` would make three. Several single-word prompts are refused as a likely unquoted prompt unless you pass `--allow-single-word-prompts`. Every command rejects excess arguments (exit 1, nothing sent).
+
 ## Configuration
 
 Environment variables (read from the real environment; a `.env` file supplies only `IDEOGRAM_API_KEY`, and only to the CLI):
@@ -1658,7 +1662,13 @@ Contributions welcome! Please follow the existing code patterns and include test
 - CLI: a request that returns zero results prints the generation id, writes the metadata file, reports an error and exits 1 (was 0)
 - CLI metadata files are written atomically (temp file, then rename), so a failed write leaves the previous record intact
 - The CLI no longer logs the billing warning for status polls, and v1 commands no longer print "✗ ... failed" after a billed success when saving fails
-- The SSRF guard also refuses NAT64, 6to4, IPv4-translated, Teredo and documentation ranges
+- The SSRF guard also refuses local-use NAT64, IPv4-translated, Teredo and documentation ranges; NAT64 (`64:ff9b::/96`) and 6to4 (`2002::/16`) addresses are checked as the IPv4 address they embed, so a public host behind DNS64 can be downloaded from
+- Every CLI command rejects excess arguments (`ideogram generate-v46 -p A fox runs` exits 1 and sends nothing; it used to send the prompt "A" and bill it). On v1 `generate`, `-p` takes several prompts, so quote each one; several single-word prompts (an unquoted `-p a red fox`) are refused unless you pass `--allow-single-word-prompts`
+- The CLI prints "This request may have run and been billed. Check your usage before retrying." for any possibly-billed failure (and the resume command instead when there is a generation id); a non-production 5xx message and log line on a POST carry the same note
+- When every file was saved and only the final metadata rewrite fails, the CLI says the result was generated, lists the saved files, says the metadata file still holds the earlier record and that nothing needs retrying, and still exits 1
+- A `--dry-run` answered with neither results nor a generation id is saved to a metadata file and reported (exit 1) instead of crashing
+- `IdeogramAPIError.generationStatus` is `'failed'` for a generation the API reported as failed, even without a `failure_reason`; the CLI prints no resume command for it. A throwing `onPoll` callback is rethrown as `IdeogramAPIError` with `generationId`, `possiblyBilled: true` and the callback's error as `cause`. `describe` removes its placeholder file when the metadata write fails
+- `--dry-run` help text now says "Price the request without running it": the library checks that a price quote came back and fails loudly if it did not, which is the only verification
 
 ### v1.0.3
 

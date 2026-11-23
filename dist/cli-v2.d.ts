@@ -77,13 +77,16 @@ export declare function describeError(err: Error & {
 export declare function getGenerationCommand(generationId: string): string;
 /**
  * Print a failed command's error, and for a failed wait the command that
- * resumes it. A generation that was submitted keeps running (and stays billed)
+ * resumes it, or for any other error that may have been billed (possiblyBilled)
+ * the billing note. A generation that was submitted keeps running (and stays billed)
  * after a polling failure, so the error line is followed by how to pick it up.
  * A generation the API reported as failed has nothing to resume.
  */
 export declare function reportCommandError(err: Error & {
     generationId?: unknown;
     failureReason?: unknown;
+    generationStatus?: unknown;
+    possiblyBilled?: unknown;
 }): void;
 /**
  * Fetch image bytes from a URL with SSRF protection on the URL and every

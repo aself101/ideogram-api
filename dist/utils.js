@@ -28,9 +28,10 @@ export function isErrnoException(e) {
  * Address ranges a download must never reach: loopback, unspecified, private,
  * link-local (cloud metadata), CGNAT, IETF/benchmarking, multicast, reserved
  * (240/4, which includes the broadcast address), the documentation ranges, and
- * the IPv6 transition ranges that embed an IPv4 address (NAT64, 6to4, SIIT,
- * Teredo). IPv4-mapped IPv6 is unwrapped
- * to IPv4 before this list is consulted (see unwrapMappedIPv4).
+ * the IPv6 transition ranges (local-use NAT64, SIIT, Teredo). IPv4-mapped IPv6
+ * is unwrapped to IPv4 before this list is consulted (see unwrapMappedIPv4), as
+ * are NAT64 (64:ff9b::/96) and 6to4 (2002::/16): their embedded IPv4 address
+ * is what gets checked (see embeddedIPv4).
  */
 const BLOCKED_ADDRESSES = new BlockList();
 for (const [network, prefix] of [
@@ -56,9 +57,9 @@ for (const [network, prefix] of [
     ['fc00::', 7], // unique local
     ['fe80::', 10], // link-local
     ['ff00::', 8], // multicast
-    ['64:ff9b::', 96], // NAT64: embeds an IPv4 address
-    ['64:ff9b:1::', 48], // local-use NAT64
-    ['2002::', 16], // 6to4: embeds an IPv4 address
+    // 64:ff9b::/96 (NAT64) and 2002::/16 (6to4) embed an IPv4 address; isBlockedIP
+    // checks that address instead (embeddedIPv4), so neither prefix is listed here.
+    ['64:ff9b:1::', 48], // local-use NAT64: blocked outright
     ['::ffff:0:0:0', 96], // IPv4-translated (SIIT)
     ['2001::', 32], // Teredo
     ['2001:db8::', 32], // documentation
@@ -91,6 +92,39 @@ function unwrapMappedIPv4(ip) {
     return `${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`;
 }
 /**
+ * The IPv4 address embedded in a NAT64 (64:ff9b::/96, last 32 bits) or 6to4
+ * (2002::/16, bits 16-47) IPv6 address, or undefined for any other address.
+ * Takes the compressed hex form the URL parser produces. A DNS64 network
+ * synthesizes 64:ff9b::a.b.c.d for a public IPv4-only host, so the embedded
+ * address decides. 64:ff9b:1::/48 (local-use NAT64) does not match and stays blocked.
+ */
+function embeddedIPv4(ipv6) {
+    const [head, tail, extra] = ipv6.split('::');
+    if (extra !== undefined)
+        return undefined;
+    const front = head === '' ? [] : head.split(':');
+    const back = tail === undefined || tail === '' ? [] : tail.split(':');
+    let groups;
+    if (tail === undefined) {
+        groups = front;
+    }
+    else {
+        const missing = 8 - front.length - back.length;
+        if (missing < 1)
+            return undefined;
+        groups = [...front, ...new Array(missing).fill('0'), ...back];
+    }
+    if (groups.length !== 8 || !groups.every((g) => /^[0-9a-f]{1,4}$/.test(g)))
+        return undefined;
+    const h = groups.map((g) => parseInt(g, 16));
+    const dotted = (high, low) => `${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`;
+    if (h[0] === 0x64 && h[1] === 0xff9b && h.slice(2, 6).every((v) => v === 0))
+        return dotted(h[6], h[7]);
+    if (h[0] === 0x2002)
+        return dotted(h[1], h[2]);
+    return undefined;
+}
+/**
  * Check whether an IP address (IPv4 or IPv6, brackets allowed) is in a blocked
  * range. An unparseable address is blocked: it cannot be shown to be public.
  *
@@ -101,8 +135,12 @@ function isBlockedIP(ip) {
     const address = unwrapMappedIPv4(ip);
     if (isIPv4(address))
         return BLOCKED_ADDRESSES.check(address, 'ipv4');
-    if (isIPv6(address))
+    if (isIPv6(address)) {
+        const embedded = embeddedIPv4(address);
+        if (embedded !== undefined && isIPv4(embedded))
+            return BLOCKED_ADDRESSES.check(embedded, 'ipv4');
         return BLOCKED_ADDRESSES.check(address, 'ipv6');
+    }
     return true;
 }
 /** True when `ip` is IPv4 loopback (127/8), after unwrapping an IPv4-mapped IPv6 spelling. */
