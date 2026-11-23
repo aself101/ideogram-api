@@ -1,3 +1,58 @@
+# Changelog
+
+All notable changes to this project are documented in this file. From 2.0.0 it is written by hand.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [2.0.0] - 2026-11-22
+
+Brings the library up to Ideogram's current API (the v2 endpoints: Ideogram 4.x, auto, SVG, video and the v2 upscaler), replaces axios with Node's built-in `fetch`, and makes the paths where money may already have moved say so. 2.0 breaks 1.x callers in the ways listed under **Changed** and **Removed**; the README's "Migrating from 1.x" section has the before-and-after code.
+
+Every endpoint except `generate-custom` (it needs a custom model this account does not have) was exercised live on 2026-11-22: dry runs priced on the v2 commands, and a full paid battery whose bill matched the calls it made.
+
+### Added
+
+- **Ideogram 4.x and auto image models:** `generateV4`, `generateV4Transparent`, `generateV4Custom`, `generateV45`, `generateV46` and `generateAuto` (CLI `generate-v4`, `generate-transparent`, `generate-custom`, `generate-v45`, `generate-v46`, `generate-auto`), with masks, source and reference images where the model takes them.
+- **Precise edit:** `preciseEditV45` and `preciseEditV46` (CLI `precise-edit`, `precise-edit-v46`), including reference images and the 4.6 context window.
+- **SVG:** `generateSvg` (CLI `generate-svg`).
+- **Video:** MiniMax Hailuo 3 and Seedance 2.5, text-, image- and reference-to-video (`minimaxH3TextToVideo`, `minimaxH3ImageToVideo`, `minimaxH3ReferenceToVideo`, `seedance25TextToVideo`, `seedance25ImageToVideo`, `seedance25ReferenceToVideo`, and the matching CLI commands).
+- **Asynchronous generations:** `getGeneration` and `waitForGeneration` (with an `onPoll` callback; resumable poll failures such as timeouts, 5xx, 408 and 425 are retried with backoff until the deadline), CLI `get-generation <id> [--wait]` and `--async` / `--wait`. `get-generation` also fetches a finished synchronous v2 result again, with freshly signed URLs.
+- **Dry runs:** `dryRun: true` / `--dry-run` prices a v2 request instead of running it and returns a quote (`isPriceQuote`). If Ideogram returns a real result instead, the library throws `EDRYRUNIGNORED` with the result attached and the CLI saves it.
+- **Billing-aware errors:** `IdeogramAPIError` carries `status`, `code`, `possiblyBilled`, `resumable`, `generationId`, `generationStatus`, `rejectReason`, `failureReason`, `body` and `result`. `classifyPollFailure` is the rule behind `resumable`; `BILLING_NOTE` is the closing sentence of every possibly-billed message.
+- **Helpers:** `extractImageUrls`, `extractVideoUrls`, `extractSvgUrls`; `validateV2Params` and `V2_OPERATION_KEYS` in `ideogram-api/config`; CLI `list-v4-resolutions`.
+- **CLI result handling:** the generation id and result URLs are printed before anything is written; the metadata file is written atomically before downloading; output files never overwrite each other. A failed download says whether the generation was billed, not to re-run it, and how to fetch the result again.
+
+### Changed
+
+- **Node.js 22 or later is required.** HTTP uses the built-in `fetch`; `buildFormData` returns a native `FormData` and names and types each file part from its bytes (1.x sent every file as `image.jpg`).
+- **A request that gets no HTTP response throws `IdeogramAPIError` with `code`** (e.g. `ECONNRESET`), not an axios error.
+- **`upscale()` uses `/v2/image/upscale/auto`,** because Ideogram retired the v1 endpoint (every request answered 400). It takes `upscaleFactor` (`x2` / `x4` / `x8`) and `seed`, returns `UpscaleResponse`, and throws on the v1 fields `prompt`, `resemblance`, `detail`, `magicPromptOption` and `numImages`. The CLI `upscale` command lost those flags and writes to `upscale-auto/` (was `upscale/`), with `items` / `itemCount` in its metadata (was `images` / `imageCount`).
+- **Importing the library no longer loads `.env` files.** Only the CLI reads them, and only `IDEOGRAM_API_KEY`.
+- **Logging:** the library logs at `warn` by default (was `info`), every level on stderr. The CLI's log lines also go to stderr, so stdout carries only results, prices, ids and paths. `setLogLevel` and the constructor's `logLevel` are case-insensitive and throw on anything but `error`, `warn`, `info` or `debug` (1.x accepted any string).
+- **Option-list constants** in `ideogram-api/config` are readonly literal tuples (`as const`) rather than `string[]`.
+- **v1 `numImages` outside 1..8 throws before any request,** in the library and on the v1 CLI commands (1.x sent an explicit 0 as one billed image). The strings `"1"`..`"8"` still work.
+- **Timeouts and poll intervals** must be whole milliseconds from 1 to 2147483647; other values are rejected before anything is sent.
+- **CLI exit codes and arguments:** a request that returns zero results exits 1 (was 0); `get-generation` exits 1 for a failed generation; excess arguments are rejected, so multi-word prompts must be quoted, and v1 `generate` refuses a list of single-word prompts unless `--allow-single-word-prompts` is passed. A multi-prompt `generate` validates every prompt before the first request.
+
+### Removed
+
+- The `axios` and `form-data` dependencies.
+- The exported type `IdeogramApiOptions` (nothing accepted it); the constructor is `new IdeogramAPI(apiKey, baseUrl?, logLevel?)`.
+- The CLI helpers `saveImage`, `generateFilename`, `ensureDirectory`, `saveMetadata`, `pause`, `createSpinner` and the `logger` re-export from `ideogram-api/utils` (`setLogLevel` remains).
+- `ENDPOINTS.UPSCALE` (now `ENDPOINTS.UPSCALE_AUTO`) and the `'upscale'` entry in `OPERATION_CONSTRAINTS`.
+
+### Fixed
+
+- No POST is ever retried, and a failure after a request was sent is reported as possibly billed (`possiblyBilled`) instead of inviting a retry. Polling failures say whether polling again can work, and the CLI prints the matching resume command.
+- Validation that costs nothing runs before anything billable is sent, including every prompt of a multi-prompt `generate` and non-image input files.
+
+### Security
+
+- API calls refuse redirects, so the `Api-Key` header never reaches another host. Downloads follow at most 5 redirects and re-run the SSRF check on every hop.
+- The SSRF guard checks every address a hostname resolves to and blocks more ranges (IPv4-mapped, NAT64 and 6to4 addresses are checked by their embedded IPv4). DNS rebinding between the check and the connection is not prevented; the README says so.
+- Server-supplied text is stripped of escape sequences, control characters and invisible formatting characters before it reaches messages, logs or the terminal; raw values stay on the error object. A printed `get-generation` command only includes ids of URL-safe characters.
+
 # [1.1.0](https://github.com/aself101/ideogram-api/compare/v1.0.3...v1.1.0) (2025-12-03)
 
 
@@ -32,13 +87,6 @@
 ### Bug Fixes
 
 * **security:** initial release with DNS rebinding prevention ([853611a](https://github.com/aself101/ideogram-api/commit/853611afaf7c45615ac569c94531a45f5bdcfbbd))
-
-# Changelog
-
-All notable changes to the Ideogram API project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.0.0] - 2025-11-19
 
