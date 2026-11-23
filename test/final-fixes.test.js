@@ -241,7 +241,7 @@ describe('item 3: possibly-billed errors say so', () => {
 
   it('the reporter adds the line for a possiblyBilled error whose message lacks it, once', () => {
     reportCommandError(new IdeogramAPIError('Request failed (ECONNRESET)', { possiblyBilled: true }));
-    expect(err()).toContain(`This request ${BILLED}`);
+    expect(err()).toContain(`The request ${BILLED}`);
     errors.length = 0;
     reportCommandError(new IdeogramAPIError(`API error (502): x The request ${BILLED}`, { possiblyBilled: true }));
     expect(err().split('billed').length - 1).toBe(1);
@@ -253,7 +253,7 @@ describe('item 3: possibly-billed errors say so', () => {
   });
 
   it('with a generationId the resume hint replaces the retry advice', () => {
-    reportCommandError(new IdeogramAPIError('Timed out', { generationId: 'gen1', possiblyBilled: true }));
+    reportCommandError(new IdeogramAPIError('Timed out', { generationId: 'gen1', possiblyBilled: true, resumable: true }));
     expect(err()).toContain('Resume with: ideogram get-generation gen1 --wait');
     expect(err()).not.toContain('Check your usage before retrying');
   });
@@ -364,7 +364,7 @@ describe('item 6: failed generation, onPoll, describe, dry-run help, detectImage
   });
 
   it('control: a poll that failed (no status) still gets the resume hint', () => {
-    reportCommandError(new IdeogramAPIError('poll failed', { generationId: 'gen1', possiblyBilled: true }));
+    reportCommandError(new IdeogramAPIError('poll failed', { generationId: 'gen1', possiblyBilled: true, resumable: true }));
     expect(err()).toContain('Resume with');
   });
 

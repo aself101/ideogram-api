@@ -632,7 +632,11 @@ export function createProgram() {
             .description(v.describe)
             .requiredOption('-p, --prompt <text>', `Prompt (max ${minimax ? '2,000' : '30,000'} characters) (required)`)
             .option('-r, --resolution <tier>', `Resolution (${(minimax ? MINIMAX_H3_RESOLUTIONS : SEEDANCE_25_RESOLUTIONS).join(', ')})`)
-            .option('-d, --duration <seconds>', minimax ? 'Length in seconds (5-15, default 5)' : 'Length in seconds (4-30; omit to let the model pick)');
+            .option('-d, --duration <seconds>', minimax
+            ? 'Length in seconds (5-15, default 5)'
+            : v.inputs === 'text'
+                ? 'Length in seconds (4-30; omit to let the model pick)'
+                : 'Length in seconds (4-30). Omitted, the request is priced at the maximum length: run --dry-run to see the price');
         if (v.inputs !== 'image') {
             cmd.option('-a, --aspect-ratio <ratio>', `Aspect ratio (${(minimax ? MINIMAX_H3_ASPECT_RATIOS : SEEDANCE_25_ASPECT_RATIOS).join(', ')})`);
         }

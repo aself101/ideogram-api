@@ -400,7 +400,7 @@ describe('getGeneration / waitForGeneration', () => {
 
   it('rethrows non-429 errors', async () => {
     fetchMock.mockReturnValue(httpError(404, { error: 'Request not found' }));
-    await expect(api.waitForGeneration('g', { intervalMs: 1 })).rejects.toThrow('Not found: Request not found');
+    await expect(api.waitForGeneration('g', { intervalMs: 1 })).rejects.toThrow('Generation g not found: check the id');
   });
 
   it('times out while still pending', async () => {

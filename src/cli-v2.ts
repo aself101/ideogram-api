@@ -6,7 +6,7 @@
 
 import path from 'path';
 import fs from 'fs/promises';
-import { IdeogramAPI, IdeogramAPIError, isPriceQuote } from './api.js';
+import { IdeogramAPI, IdeogramAPIError, isPriceQuote, BILLING_NOTE } from './api.js';
 import { discardFile, MAX_TIMER_MS } from './http.js';
 import type {
   V2GenerationResponse,
@@ -106,9 +106,6 @@ export interface V2CliOptions {
   waitTimeout?: string;
 }
 
-/** Said once for a failed request that may have run: an API 5xx, or no answer at all. */
-const BILLING_NOTE = 'This request may have run and been billed. Check your usage before retrying.';
-
 /**
  * Message for a failed command. Network errors can arrive with a bare
  * message ("fetch failed", "Error") and the real reason on `cause`, so append
@@ -142,30 +139,30 @@ export function getGenerationCommand(generationId: string): string {
 }
 
 /**
- * Print a failed command's error, and for a failed wait the command that
- * resumes it, or for any other error that may have been billed (possiblyBilled)
- * the billing note. A generation that was submitted keeps running (and stays billed)
- * after a polling failure, so the error line is followed by how to pick it up.
- * A generation the API reported as failed has nothing to resume.
+ * Print a failed command's error, and for a resumable failure (`resumable`)
+ * the command that picks the generation up, or for any other error that may
+ * have been billed (possiblyBilled) the billing note. A generation that was
+ * submitted keeps running (and stays billed) after a transient polling failure.
+ * A generation the API reported as failed, or a 404, has nothing to resume.
  */
 export function reportCommandError(
   err: Error & {
     generationId?: unknown;
-    failureReason?: unknown;
-    generationStatus?: unknown;
+    status?: unknown;
+    resumable?: unknown;
     possiblyBilled?: unknown;
   }
 ): void {
   const described = describeError(err);
   console.error(`\n✗ Error: ${described}\n`);
-  const resumable =
-    typeof err.generationId === 'string' &&
-    err.generationId !== '' &&
-    err.failureReason === undefined &&
-    err.generationStatus !== 'failed';
-  if (resumable) {
-    console.error(`  The generation may still complete. Resume with: ${getGenerationCommand(err.generationId as string)}\n`);
-  } else if (err.possiblyBilled === true && !described.includes('may have run and been billed')) {
+  if (err.resumable === true && typeof err.generationId === 'string' && err.generationId !== '') {
+    const command = getGenerationCommand(err.generationId);
+    if (err.status === 401 || err.status === 403) {
+      console.error(`  The generation may still complete. Fix the API key, then resume with: ${command}\n`);
+    } else {
+      console.error(`  The generation may still complete. Resume with: ${command}\n`);
+    }
+  } else if (err.possiblyBilled === true && !(err.message ?? '').endsWith(BILLING_NOTE)) {
     console.error(`  ${BILLING_NOTE}\n`);
   }
 }
@@ -244,6 +241,18 @@ function maxImageBytesFor(operation: V2OperationKey): number {
   return L.seedance25.maxFileBytes;
 }
 
+/** fs.stat for an input file, with the library's messages for a missing or unreadable file. */
+async function statInput(file: string, kind: 'Image' | 'Audio') {
+  try {
+    return await fs.stat(file);
+  } catch (error) {
+    const code = (error as { code?: unknown } | null)?.code;
+    if (code === 'ENOENT') throw new Error(`${kind} file not found: ${file}`);
+    if (code === 'EACCES') throw new Error(`Permission denied reading ${kind.toLowerCase()} file: ${file}`);
+    throw error;
+  }
+}
+
 /**
  * Check local files against the documented v2 limits before uploading:
  * per-file size, mask dimensions, pixel caps, source aspect ratio, and an
@@ -260,7 +269,7 @@ async function preflightV2Images(operation: V2OperationKey, options: V2CliOption
     ...(options.mask ? [options.mask] : []),
   ];
   for (const file of files) {
-    const { size } = await fs.stat(file);
+    const { size } = await statInput(file, 'Image');
     if (size > maxBytes) {
       throw new Error(
         `${file} is ${(size / 1024 / 1024).toFixed(1)}MB; this endpoint accepts at most ${maxBytes / 1024 / 1024}MB per image`
@@ -269,7 +278,7 @@ async function preflightV2Images(operation: V2OperationKey, options: V2CliOption
   }
   const maxAudioBytes = operation.startsWith('minimax-h3-') ? L.minimaxH3.maxAudioBytes : L.seedance25.maxAudioBytes;
   for (const file of options.referenceAudios || []) {
-    const { size } = await fs.stat(file);
+    const { size } = await statInput(file, 'Audio');
     if (size > maxAudioBytes) {
       throw new Error(`${file} is ${(size / 1024 / 1024).toFixed(1)}MB; reference audio is limited to 15MB per file`);
     }
@@ -836,6 +845,7 @@ export async function executeGetGeneration(
   options: { wait?: boolean; pollInterval?: string; waitTimeout?: string },
   globalOptions: GlobalOptions
 ): Promise<void> {
+  let generationFailed = false;
   try {
     setLogLevel(globalOptions.logLevel);
     const apiKey = getIdeogramApiKey(globalOptions.apiKey || null);
@@ -849,6 +859,7 @@ export async function executeGetGeneration(
 
     console.log(`\nGeneration ${status.generation_id}: ${status.status} (created ${status.created})`);
     if (status.failure_reason) console.log(`Failure reason: ${status.failure_reason}`);
+    generationFailed = status.status === 'failed';
     if (status.usage_cost_usd_micros !== undefined) {
       console.log(`Usage cost: $${(status.usage_cost_usd_micros / 1e6).toFixed(4)}`);
     }
@@ -868,6 +879,8 @@ export async function executeGetGeneration(
     reportCommandError(toError(error));
     process.exit(1);
   }
+  // A failed generation is a failed command, with or without --wait (a pending one is just a status query).
+  if (generationFailed) process.exit(1);
 }
 
 /** File extension for downloaded bytes (v2 outputs may be PNG, JPEG or WebP). */
@@ -948,7 +961,7 @@ async function saveV2Results(
           responseKeys: typeof meta.rawResponse === 'object' && meta.rawResponse !== null ? Object.keys(meta.rawResponse) : [],
         }
       : {};
-  const writeMetadata = (target: string, saved: Array<Record<string, unknown>>) =>
+  const writeMetadata = (target: string, records: Array<Record<string, unknown>>) =>
     saveMetadata(target, {
       operation,
       timestamp,
@@ -957,7 +970,7 @@ async function saveV2Results(
       generationKind: meta.generationKind,
       usageCostUsdMicros: meta.usageCostUsdMicros,
       parameters: meta.parameters,
-      response: { itemCount: items.length, ...emptyResponse, items: saved },
+      response: { itemCount: items.length, ...emptyResponse, items: records },
     });
   let claimed: string | undefined;
   try {
@@ -983,7 +996,8 @@ async function saveV2Results(
     );
   }
 
-  const saved: Array<Record<string, unknown>> = [];
+  // One record per item handled so far: saved ones carry a `path`, skipped ones (no URL, unsafe, not an image) do not.
+  const records: Array<Record<string, unknown>> = [];
   try {
     for (let i = 0; i < items.length; i++) {
       // GeneratedImage (sync responses) is a subset of GenerationDataItem's fields.
@@ -996,7 +1010,7 @@ async function saveV2Results(
         const noun = kind === 'video.generation' ? 'video' : 'SVG';
         if (!item.url) {
           console.log(`⚠ ${noun} ${label} has no URL (it may have failed safety checks)`);
-          saved.push({ index: i + 1, objectType: kind, assetId: item.asset_id });
+          records.push({ index: i + 1, objectType: kind, assetId: item.asset_id });
           continue;
         }
         const filePath = await claimPath(
@@ -1009,7 +1023,7 @@ async function saveV2Results(
           throw error;
         }
         console.log(`✓ Saved ${noun} ${label}: ${filePath}`);
-        saved.push({
+        records.push({
           index: i + 1,
           objectType: kind,
           path: filePath,
@@ -1026,12 +1040,12 @@ async function saveV2Results(
       }
       if (kind && !kind.startsWith('image')) {
         console.log(`⚠ Item ${label} is a ${kind}; not downloaded (see metadata)`);
-        saved.push({ index: i + 1, objectType: kind, url: item.url });
+        records.push({ index: i + 1, objectType: kind, url: item.url });
         continue;
       }
       if (item.is_image_safe === false || !item.url) {
         console.log(`⚠ Image ${label} failed safety checks; no URL returned`);
-        saved.push({ index: i + 1, isImageSafe: false, resolution: item.resolution, seed: item.seed });
+        records.push({ index: i + 1, isImageSafe: false, resolution: item.resolution, seed: item.seed });
         continue;
       }
       const buffer = await fetchImage(item.url);
@@ -1045,7 +1059,7 @@ async function saveV2Results(
         throw error;
       }
       console.log(`✓ Saved image ${label}: ${imagePath}`);
-      saved.push({
+      records.push({
         index: i + 1,
         path: imagePath,
         url: item.url,
@@ -1057,13 +1071,13 @@ async function saveV2Results(
     }
   } catch (error) {
     console.error(
-      `✗ Download failed after ${saved.length}/${items.length} item(s). ` +
+      `✗ Download failed after ${records.filter((r) => typeof r.path === 'string').length}/${items.length} item(s) saved. ` +
         `Generation id: ${meta.generationId}. Result URLs are in ${metadataPath}`
     );
     // Make the metadata true for what is on disk: the items saved so far with
     // their paths, then the rest (the failed item and any after it) with their URLs.
     try {
-      await writeMetadata(metadataPath, [...saved, ...pending(saved.length)]);
+      await writeMetadata(metadataPath, [...records, ...pending(records.length)]);
     } catch (metadataError) {
       console.error(
         `✗ Could not update ${metadataPath} with the saved files: ${toError(metadataError).message}. ` +
@@ -1074,10 +1088,10 @@ async function saveV2Results(
   }
 
   try {
-    await writeMetadata(metadataPath, saved);
+    await writeMetadata(metadataPath, records);
   } catch (error) {
     // Every file is on disk; only the final rewrite failed. Say so, so the caller does not pay again.
-    const files = saved.map((entry) => entry.path).filter((p): p is string => typeof p === 'string');
+    const files = records.map((entry) => entry.path).filter((p): p is string => typeof p === 'string');
     throw new Error(
       `The result was generated and every file was saved${files.length ? ` (${files.join(', ')})` : ''}, ` +
         `but the final update of ${metadataPath} failed: ${toError(error).message}. ` +

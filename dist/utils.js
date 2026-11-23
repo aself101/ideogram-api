@@ -551,7 +551,11 @@ export function buildFormData(params) {
     return formData;
 }
 /**
- * Set logger level.
+ * Set the level of the module logger: file loading, DNS and download checks
+ * and the CLI's own messages. Library default is 'warn'; logs go to stderr.
+ * Also becomes the default level of `IdeogramAPI` instances created AFTER this
+ * call; an existing instance keeps its own level (change it with
+ * `IdeogramAPI#setLogLevel`).
  *
  * @param level - Log level (debug, info, warn, error)
  */

@@ -60,7 +60,7 @@ export declare const RENDERING_SPEEDS: readonly ["FLASH", "TURBO", "DEFAULT", "Q
 export declare const MAGIC_PROMPT_OPTIONS: readonly ["AUTO", "ON", "OFF"];
 /** Style types (v1). */
 export declare const STYLE_TYPES: readonly ["AUTO", "GENERAL", "REALISTIC", "DESIGN", "FICTION"];
-/** Style presets (52 total). */
+/** Style presets (62 total). */
 export declare const STYLE_PRESETS: readonly ["80S_ILLUSTRATION", "90S_NOSTALGIA", "ABSTRACT_ORGANIC", "ANALOG_NOSTALGIA", "ART_BRUT", "ART_DECO", "ART_POSTER", "AURA", "AVANT_GARDE", "BAUHAUS", "BLUEPRINT", "BLURRY_MOTION", "BRIGHT_ART", "C4D_CARTOON", "CHILDRENS_BOOK", "COLLAGE", "COLORING_BOOK_I", "COLORING_BOOK_II", "CUBISM", "DARK_AURA", "DOODLE", "DOUBLE_EXPOSURE", "DRAMATIC_CINEMA", "EDITORIAL", "EMOTIONAL_MINIMAL", "ETHEREAL_PARTY", "EXPIRED_FILM", "FLAT_ART", "FLAT_VECTOR", "FOREST_REVERIE", "GEO_MINIMALIST", "GLASS_PRISM", "GOLDEN_HOUR", "GRAFFITI_I", "GRAFFITI_II", "HALFTONE_PRINT", "HIGH_CONTRAST", "HIPPIE_ERA", "ICONIC", "JAPANDI_FUSION", "JAZZY", "LONG_EXPOSURE", "MAGAZINE_EDITORIAL", "MINIMAL_ILLUSTRATION", "MIXED_MEDIA", "MONOCHROME", "NIGHTLIFE", "OIL_PAINTING", "OLD_CARTOONS", "PAINT_GESTURE", "POP_ART", "RETRO_ETCHING", "RIVIERA_POP", "SPOTLIGHT_80S", "STYLIZED_RED", "SURREAL_COLLAGE", "TRAVEL_POSTER", "VINTAGE_GEO", "VINTAGE_POSTER", "WATERCOLOR", "WEIRD", "WOODBLOCK_PRINT"];
 /** Color palette preset names (v1, uppercase; v2 uses V2_COLOR_PALETTE_PRESETS). */
 export declare const COLOR_PALETTE_PRESETS: readonly ["EMBER", "FRESH", "JUNGLE", "MAGIC", "MELON", "MOSAIC", "PASTEL", "ULTRAMARINE"];
@@ -349,7 +349,7 @@ export declare function redactApiKey(apiKey: string): string;
  * @throws Error if validation fails
  *
  * @example
- * validateOperationParams('generate-v3', { prompt: 'a cat', aspectRatio: '1:1' });
+ * validateOperationParams('generate-v3', { prompt: 'a cat', aspectRatio: '1x1' });
  * validateOperationParams('remix-v3', { prompt: 'watercolor', imageWeight: 55 });
  */
 export declare function validateOperationParams(operation: string, params: ValidationParams): void;

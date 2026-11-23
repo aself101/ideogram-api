@@ -82,7 +82,7 @@ export const RENDERING_SPEEDS = ['FLASH', 'TURBO', 'DEFAULT', 'QUALITY'];
 export const MAGIC_PROMPT_OPTIONS = ['AUTO', 'ON', 'OFF'];
 /** Style types (v1). */
 export const STYLE_TYPES = ['AUTO', 'GENERAL', 'REALISTIC', 'DESIGN', 'FICTION'];
-/** Style presets (52 total). */
+/** Style presets (62 total). */
 export const STYLE_PRESETS = [
     '80S_ILLUSTRATION', '90S_NOSTALGIA', 'ABSTRACT_ORGANIC', 'ANALOG_NOSTALGIA',
     'ART_BRUT', 'ART_DECO', 'ART_POSTER', 'AURA', 'AVANT_GARDE', 'BAUHAUS',
@@ -408,6 +408,25 @@ export function assertColorPalette(palette) {
         }
     }
 }
+/** Every v2 operation key, for rejecting an unknown one by name. */
+const V2_OPERATION_KEYS = [
+    'generate-v4',
+    'generate-v4-transparent',
+    'generate-v4-custom',
+    'generate-v45',
+    'generate-v46',
+    'generate-auto',
+    'precise-edit-v45',
+    'precise-edit-v46',
+    'upscale-auto',
+    'generate-svg',
+    'minimax-h3-text-to-video',
+    'minimax-h3-image-to-video',
+    'minimax-h3-reference-to-video',
+    'seedance-2-5-text-to-video',
+    'seedance-2-5-image-to-video',
+    'seedance-2-5-reference-to-video',
+];
 /**
  * Validate parameters for a v2 operation against the documented rules.
  * Catches mistakes before a request is sent; the CLI runs it on every v2 command.
@@ -428,6 +447,9 @@ export function assertColorPalette(palette) {
  */
 export function validateV2Params(operation, params) {
     const L = V2_LIMITS;
+    if (!V2_OPERATION_KEYS.includes(operation)) {
+        throw new Error(`Unknown v2 operation '${String(operation)}'. Valid: ${V2_OPERATION_KEYS.join(', ')}`);
+    }
     // Every v2 operation takes a prompt except the upscaler.
     if (operation !== 'upscale-auto') {
         if (!params.prompt || typeof params.prompt !== 'string') {
@@ -767,7 +789,7 @@ export function redactApiKey(apiKey) {
  * @throws Error if validation fails
  *
  * @example
- * validateOperationParams('generate-v3', { prompt: 'a cat', aspectRatio: '1:1' });
+ * validateOperationParams('generate-v3', { prompt: 'a cat', aspectRatio: '1x1' });
  * validateOperationParams('remix-v3', { prompt: 'watercolor', imageWeight: 55 });
  */
 export function validateOperationParams(operation, params) {

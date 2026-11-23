@@ -25,6 +25,11 @@
  */
 import type { GenerateV4Params, GenerateV4TransparentParams, GenerateV4CustomParams, GenerateV45Params, GenerateV46Params, GenerateAutoParams, PreciseEditV45Params, PreciseEditV46Params, GenerateSvgParams, MinimaxH3TextToVideoParams, MinimaxH3ImageToVideoParams, MinimaxH3ReferenceToVideoParams, Seedance25TextToVideoParams, Seedance25ImageToVideoParams, Seedance25ReferenceToVideoParams, V2Acknowledgement, UpscaledImage, V2GenerationResponse, PriceQuote, GenerationStatus, GenerationDataItem, WaitForGenerationOptions, GeneratedImage, GenerateParams, EditParams, RemixParams, ReframeParams, ReplaceBackgroundParams, UpscaleParams, UpscaleResponse, DescribeParams, GenerationResponse, DescribeResponse, ImageData } from './types/index.js';
 /**
+ * Said once for a failed request that may have run and been charged. Messages
+ * that carry it end with it exactly, so the CLI can tell it was already said.
+ */
+export declare const BILLING_NOTE = "The request may have run and been billed. Check your usage before retrying.";
+/**
  * Error thrown for a failed Ideogram API request.
  * Extends Error, so existing `catch (e) { e.message }` code keeps working.
  */
@@ -40,23 +45,32 @@ export declare class IdeogramAPIError extends Error {
     /** Parsed response body, when there was one. */
     readonly body?: unknown;
     /**
-     * No HTTP response: the network error code (e.g. 'ECONNRESET', 'ETIMEDOUT'
-     * for a timeout). The request may still have run server-side.
+     * A client-side classification of the failure: a network error code when no
+     * response arrived ('ECONNRESET', 'ETIMEDOUT', ...), or 'ERESPONSETOOLARGE' /
+     * 'EDRYRUNIGNORED' (and a network code from a failed body read) when a
+     * response did arrive. Not an HTTP status; see `status` for that.
      */
     readonly code?: string;
     /**
-     * True when the request was sent and its outcome is unknown or server-side
-     * failed: no response, a response body that could not be read or parsed, an
-     * over-size body, or a 5xx. The generation may have run and been billed, so
-     * check usage (or the generation id) before retrying. False for 4xx
+     * True when the request, or the generation this error concerns, may have been
+     * charged: the request was sent and its outcome is unknown (no response, an
+     * unreadable or over-size body, a 5xx), or the error comes from
+     * waitForGeneration (the generation was already submitted). False for 4xx
      * validation, auth and rate-limit answers, for anything thrown before the
-     * request was sent, and for failed status polls (a GET is never billed).
-     * Also true for any error from waitForGeneration, because the generation was
-     * already submitted (and billed): resume with getGeneration or
-     * waitForGeneration using `generationId`, never resubmit.
+     * request was sent, and for a failed status poll outside waitForGeneration
+     * (a GET is never billed). Check usage before submitting again; never resubmit
+     * to recover a generation.
      */
     readonly possiblyBilled: boolean;
-    /** Polling: the generation being waited on, so a failed wait can be resumed. */
+    /**
+     * True when calling getGeneration or waitForGeneration again with
+     * `generationId` can still succeed: a network or timeout failure with no
+     * response, a 5xx, the wait deadline, an onPoll callback that threw, and
+     * 401/403 (after fixing the API key). False (the default) for a generation
+     * that finished as failed, and for a 4xx the API will repeat (404, 400, ...).
+     */
+    readonly resumable: boolean;
+    /** The generation this error concerns (polling, or a dry run that was really run). */
     readonly generationId?: string;
     /**
      * Polling: the status string of a generation that finished unsuccessfully
@@ -78,6 +92,7 @@ export declare class IdeogramAPIError extends Error {
         body?: unknown;
         code?: string;
         possiblyBilled?: boolean;
+        resumable?: boolean;
         generationId?: string;
         generationStatus?: string;
         result?: unknown;
@@ -97,7 +112,9 @@ export declare class IdeogramAPI {
      *
      * @param apiKey - Ideogram API key
      * @param baseUrl - Base API URL (default: https://api.ideogram.ai)
-     * @param logLevel - Logging level (debug, info, warn, error)
+     * @param logLevel - Logging level (debug, info, warn, error). Defaults to the
+     *   module logger's level: 'warn', or whatever `setLogLevel` from
+     *   `ideogram-api/utils` last set. Logs go to stderr.
      * @throws Error if API key is not provided or base URL is not HTTPS
      *
      * @example
@@ -528,7 +545,10 @@ export declare class IdeogramAPI {
      */
     waitForGeneration(generationId: string, options?: WaitForGenerationOptions): Promise<GenerationStatus>;
     /**
-     * Set logger level.
+     * Set the log level of THIS client instance only (the logger that reports
+     * request failures and polling). It does not touch the module logger that
+     * `setLogLevel` from `ideogram-api/utils` controls (file loading, DNS and
+     * download checks); that one only sets the default for instances created later.
      *
      * @param level - Log level (debug, info, warn, error)
      *

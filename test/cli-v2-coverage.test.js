@@ -426,7 +426,8 @@ describe('executeGetGeneration', () => {
       }),
     });
     await executeGetGeneration('gf', {}, global());
-    expect(exitSpy).not.toHaveBeenCalled();
+    // A failed generation exits 1 without --wait too (consumer-fixes item 3).
+    expect(exitSpy).toHaveBeenCalledWith(1);
     expect(out()).toContain('Generation gf: failed (created t0)');
     expect(out()).toContain('Failure reason: content policy');
     expect(out()).toContain('Usage cost: $0.0125');

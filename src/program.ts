@@ -861,7 +861,11 @@ export function createProgram(): Command {
       )
       .option(
         '-d, --duration <seconds>',
-        minimax ? 'Length in seconds (5-15, default 5)' : 'Length in seconds (4-30; omit to let the model pick)'
+        minimax
+          ? 'Length in seconds (5-15, default 5)'
+          : v.inputs === 'text'
+            ? 'Length in seconds (4-30; omit to let the model pick)'
+            : 'Length in seconds (4-30). Omitted, the request is priced at the maximum length: run --dry-run to see the price'
       );
     if (v.inputs !== 'image') {
       cmd.option(

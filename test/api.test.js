@@ -47,8 +47,8 @@ describe('IdeogramAPI Class', () => {
       expect(debugApi.logger.level).toBe('debug');
     });
 
-    it('should default to info log level', () => {
-      expect(api.logger.level).toBe('info');
+    it('should default to warn log level', () => {
+      expect(api.logger.level).toBe('warn');
     });
   });
 
