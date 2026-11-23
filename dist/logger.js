@@ -11,13 +11,16 @@ import winston from 'winston';
 export const ALL_LOG_LEVELS = ['error', 'warn', 'info', 'http', 'verbose', 'debug', 'silly'];
 /** The levels a caller may ask for. */
 export const LOG_LEVELS = ['error', 'warn', 'info', 'debug'];
+function isLogLevel(value) {
+    return LOG_LEVELS.includes(value);
+}
 /**
- * Lowercase a requested log level and check it is one of LOG_LEVELS.
+ * Trim and lowercase a requested log level and check it is one of LOG_LEVELS.
  * @throws Error naming the bad value and the valid ones
  */
 export function normalizeLogLevel(level, name = 'log level') {
     const normalized = typeof level === 'string' ? level.trim().toLowerCase() : level;
-    if (!LOG_LEVELS.includes(normalized)) {
+    if (!isLogLevel(normalized)) {
         throw new Error(`Invalid ${name} '${String(level)}'. Use one of: ${LOG_LEVELS.join(', ')}`);
     }
     return normalized;

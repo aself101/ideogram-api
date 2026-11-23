@@ -84,6 +84,9 @@ export declare class IdeogramAPIError extends Error {
      */
     readonly possiblyBilled: boolean;
     /**
+     * Set by waitForGeneration and getGeneration (the two polling methods); false
+     * on every error from any other method.
+     *
      * True when calling getGeneration or waitForGeneration again with
      * `generationId` can still succeed. Everything that fails while polling is
      * resumable (no response or timeout, 5xx, 408, 425, 429, 402, any other 4xx,
@@ -553,11 +556,17 @@ export declare class IdeogramAPI {
      */
     getGeneration(generationId: string, options?: {
         timeoutMs?: number;
-    }): Promise<GenerationStatus>;
+    } | null): Promise<GenerationStatus>;
     /**
      * Poll a generation until it completes or fails.
      * A 429 while polling backs off (doubling the interval, at least 1s and up to 30s, and never
-     * shorter than the interval in use) and keeps polling.
+     * shorter than the interval in use) and keeps polling. So does any other resumable poll
+     * failure that a retry can plausibly clear (no response, a timeout, 5xx, 408, 425), with
+     * the same backoff, while time remains before the deadline; the 5th failure in a row is thrown
+     * (the count resets after a successful poll); each retry is logged at warn. A permanent failure
+     * (see `classifyPollFailure`: 400, 401, 403, 404, 410, 422, an over-size body, a failed
+     * generation) throws at once, and so does an `onPoll` callback that throws. When the
+     * retries run out or the deadline passes, the error is thrown with `resumable: true`.
      *
      * @param generationId - The generation_id returned by a v2 request
      * @param options - Poll interval, overall timeout, per-poll callback
@@ -572,7 +581,7 @@ export declare class IdeogramAPI {
      * const ack = await api.generateV45({ prompt: '...', async: true });
      * const done = await api.waitForGeneration(ack.generation_id);
      */
-    waitForGeneration(generationId: string, options?: WaitForGenerationOptions): Promise<GenerationStatus>;
+    waitForGeneration(generationId: string, options?: WaitForGenerationOptions | null): Promise<GenerationStatus>;
     /**
      * Set the log level of THIS client instance only (the logger that reports
      * request failures and polling). It does not touch the module logger that

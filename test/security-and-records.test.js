@@ -38,7 +38,7 @@ vi.mock('fs/promises', async (importOriginal) => {
 });
 
 import { lookup } from 'dns/promises';
-import { fetchMock, fakeResponse, resetHttp, timeoutSpy } from './helpers/http.js';
+import { fetchMock, fakeResponse, resetHttp, timeoutSpy, instantSleeps } from './helpers/http.js';
 import { IdeogramAPI, IdeogramAPIError } from '../src/api.js';
 import { validateImageUrl, downloadBuffer, downloadToFile } from '../src/utils.js';
 import {
@@ -713,6 +713,7 @@ describe('item 7: waitForGeneration', () => {
   const pending = (id) => ({ generation_id: id, status: 'pending', created: 'x' });
 
   it('an error while polling carries the generation id (property and message), status and cause', async () => {
+    instantSleeps(); // the 500 is retried before it is thrown
     let n = 0;
     fetchMock.mockImplementation(() =>
       Promise.resolve(n++ === 0 ? fakeResponse(200, pending('gen-x')) : fakeResponse(500, { error: 'boom' }))
@@ -739,7 +740,7 @@ describe('item 7: waitForGeneration', () => {
     expect(timedOut.generationId).toBe('gen-t');
   });
 
-  it('a 429 still backs off and keeps polling (no new retry on other errors)', async () => {
+  it('a 429 still backs off and keeps polling', async () => {
     let n = 0;
     fetchMock.mockImplementation(() =>
       Promise.resolve(
@@ -785,6 +786,7 @@ describe('item 7: waitForGeneration', () => {
       fetchMock.mockImplementation(() => Promise.resolve(fakeResponse(status, { error: 'boom' })));
 
     it('get-generation --wait', async () => {
+      instantSleeps();
       failing();
       const res = await caught(executeGetGeneration('gen-x', { wait: true, pollInterval: '1' }, global()));
       expect(res.code).toBe(1);
@@ -794,12 +796,14 @@ describe('item 7: waitForGeneration', () => {
     });
 
     it('an id that starts with "-" gets the "--" form', async () => {
+      instantSleeps();
       failing();
       await caught(executeGetGeneration('-abc', { wait: true, pollInterval: '1' }, global()));
       expect(errors.join('\n')).toContain('ideogram get-generation --wait -- -abc');
     });
 
     it('SVG --wait', async () => {
+      instantSleeps();
       fetchMock.mockImplementation((url) =>
         Promise.resolve(
           String(url).includes('/generations/')

@@ -66,7 +66,7 @@ Ideogram 3.0 (`generate`, `edit`, `remix`, ...) is on the older v1 API and has n
 - **Dry runs are priced, not run.** Every v2 method and command takes `dryRun: true` / `--dry-run`; the Ideogram 3.0 operations do not. See [Dry runs and prices](#dry-runs-and-prices).
 - **A request that fails after it was sent may still have been billed.** See [Errors](#errors) for how to resume or check usage instead of resubmitting.
 - **Quote each CLI prompt.** On v1 `generate`, `--prompt` takes one or more values: `--prompt "a red fox" "a blue owl"` makes two paid generations, while an unquoted `--prompt a red fox` would make three. Several single-word prompts are therefore refused as a likely unquoted prompt unless you pass `--allow-single-word-prompts`. Every command rejects excess arguments (exit 1, nothing sent); `ideogram generate-v46 -p A fox runs` used to send, and bill, the prompt "A".
-- **Where results go.** The CLI prints the generation id and result URLs before it writes anything to disk, then writes a metadata file (atomically) before downloading, so a failed download or write keeps the record. Result URLs are temporary (Ideogram serves them from an ephemeral path), so download promptly; `get-generation <id>` can fetch a v2 result again by id. Output files never overwrite each other. A request that returns zero results, or a `--dry-run` that returns a real result, is reported and exits non-zero; the id and metadata are kept.
+- **Where results go.** The CLI prints the generation id and result URLs before it writes anything to disk, then writes a metadata file (atomically) before downloading, so a failed download or write keeps the record. If a download fails after the generation completed, the CLI says it completed and was billed (do not re-run) and prints the `get-generation` command (v2) or points to the URLs in the metadata file (v1). Result URLs are temporary (Ideogram serves them from an ephemeral path), so download promptly; `get-generation <id>` can fetch a v2 result again by id. <!-- VERIFY live: sync id re-fetch, fresh URLs --> Output files never overwrite each other. A request that returns zero results, or a `--dry-run` that returns a real result, is reported and exits non-zero; the id and metadata are kept.
 
 ## Ideogram 4.x, SVG and Video (v2 API)
 
@@ -189,7 +189,7 @@ Two things the quotes showed that Ideogram's docs do not say:
 ### Sync, async and always-async
 
 - **Synchronous requests cannot be recovered.** This covers the 3.0 operations and the v2 image endpoints unless you set `async`. If one fails after it was sent (timeout, reset, unreadable body) there is no generation id to fetch the result with, and it may still have been billed. For costly or long requests use `async: true` and poll.
-- **v2 image endpoints** return the images by default. Set `async: true` (CLI `--async`) to get a `generation_id` back at once; `waitForGeneration(id)` polls until it completes. `webhookUrl` asks Ideogram to POST the result to you instead.
+- **v2 image endpoints** return the images by default. Set `async: true` (CLI `--async`) to get a `generation_id` back at once; `waitForGeneration(id)` polls until it completes, retrying resumable poll failures (see below). `webhookUrl` asks Ideogram to POST the result to you instead.
 - **SVG and video are always asynchronous.** They resolve to `{ generation_id, created? }`. Collect the result with `waitForGeneration`, then `extractSvgUrls` / `extractVideoUrls`. On the CLI, `--wait` polls and downloads (default poll interval 5 s, give-up time 30 minutes); the job keeps running if you stop waiting, and `get-generation <id> --wait` picks it up later.
 
 ```typescript
@@ -201,7 +201,7 @@ const done = await api.waitForGeneration(ack.generation_id, { intervalMs: 5000, 
 console.log(extractVideoUrls(done));
 ```
 
-`waitForGeneration` defaults to a 2 s poll interval and a 10-minute limit, which a long video can exceed; pass `timeoutMs`. Videos and SVGs are downloaded as streams (`downloadToFile` in `ideogram-api/utils`), not buffered in memory; if a download fails or exceeds its size cap, `downloadToFile` removes the partial file.
+`waitForGeneration` defaults to a 2 s poll interval and a 10-minute limit, which a long video can exceed; pass `timeoutMs`. A resumable poll failure (no response, timeout, 5xx, 408, 425, 429) is retried with backoff (doubling, 1-30 s) while time remains, up to 5 consecutive failures; a non-resumable failure or an `onPoll` throw ends the wait at once, and exhausted retries or the deadline throw with `resumable: true`. Videos and SVGs are downloaded as streams (`downloadToFile` in `ideogram-api/utils`), not buffered in memory; if a download fails or exceeds its size cap, `downloadToFile` removes the partial file.
 
 ### Model notes
 
@@ -225,10 +225,10 @@ Every failure after a request was sent throws `IdeogramAPIError` (a subclass of 
 | `code` | A client-side classification: a network error code when no response arrived (`ECONNRESET`, `ETIMEDOUT` for a timeout, ...), or `ERESPONSETOOLARGE` / `EDRYRUNIGNORED`. |
 | `possiblyBilled` | `true` when the request, or the generation this error concerns, may have been charged. Every `waitForGeneration` error has it `true`, because the generation was already submitted; a direct `getGeneration` failure has it `false`. |
 | `generationId` | Set on `waitForGeneration` and `getGeneration` errors. Resume with it; never resubmit. |
-| `resumable` | `true` when calling `getGeneration` / `waitForGeneration` again with `generationId` can still succeed: no response, timeouts, 5xx, 408, 425, 402, the wait deadline ("Timed out after ..."), and a throwing `onPoll` callback (rethrown with the callback's error as `cause`). `false` for HTTP 400, 404, 410 and 422, a response too large (`ERESPONSETOOLARGE`) and a failed generation. 401/403 are `false` too: fix the key first, then resume. |
+| `resumable` | `true` when calling `getGeneration` / `waitForGeneration` again with `generationId` can still succeed: no response, timeouts, 5xx, 408, 425, 429, 402, any other 4xx, the wait deadline ("Timed out after ..."), and a throwing `onPoll` callback (rethrown with the callback's error as `cause`). `false` only for HTTP 400, 401, 403, 404, 410 and 422, a response too large (`ERESPONSETOOLARGE`) and a failed generation; that list is exhaustive, and everything else is resumable. For 401/403, fix the key first, then resume. |
 | `result` | With `EDRYRUNIGNORED`: the response the API returned instead of a quote. |
 
-`waitForGeneration` argument errors (empty id, bad `intervalMs` / `timeoutMs`) throw `IdeogramAPIError` with `code: 'EINVALIDARGUMENT'`: not billed, not resumable. Its `onPoll` option (`WaitForGenerationOptions`) is called with each polled `GenerationStatus`. `BILLING_NOTE` is exported: the exact closing sentence of a possibly-billed message ("The request may have run and been billed. Check your usage before retrying."). Server-supplied text (error message, `failure_reason`, `reject_reason`) is stripped of control characters before it reaches messages, logs or CLI output; `error.body` keeps the raw response.
+`waitForGeneration` argument errors (empty id, bad `intervalMs` / `timeoutMs`) throw `IdeogramAPIError` with `code: 'EINVALIDARGUMENT'`: not billed, not resumable. Its `onPoll` option (`WaitForGenerationOptions`) is called with each polled `GenerationStatus`. The exported `classifyPollFailure({ status, code, generationStatus })` implements this rule and returns `{ resumable }`. `BILLING_NOTE` is exported: the exact closing sentence of a possibly-billed message ("The request may have run and been billed. Check your usage before retrying."). Server-supplied text (error messages, `failure_reason`, `reject_reason`, and on success paths statuses, ids, URLs, descriptions and quote fields) is stripped of escape sequences, control characters and invisible bidi/formatting characters before it reaches messages, logs or CLI output; `error.body`, `rejectReason` and `failureReason` keep the raw values. The CLI puts a generation id into a printed command only if it is 1-128 letters, digits, `_` or `-`; any other id is shown on its own line and the command uses a placeholder.
 
 ```typescript
 import { IdeogramAPI, IdeogramAPIError } from 'ideogram-api';
@@ -256,7 +256,7 @@ Common statuses: 400 invalid parameters; 401 invalid API key; 402 (v2) out of cr
 
 **A request with no response may still have been billed.** On 2026-11-22 one `generate-auto` request failed client-side with no response and was charged all the same. On the CLI, a failed command prints the error, then the resume command (`ideogram get-generation <id> --wait`, or `ideogram get-generation --wait -- <id>` when the id starts with `-`) when the error is `resumable`; for 401/403 it says "Fix the API key, then resume with: ..." instead. Otherwise it prints `BILLING_NOTE` when the error is `possiblyBilled`. A mistyped id (404, 400, 410, 422 while polling) gets no billing note, though the 404 message says a submitted generation may still have been billed. `get-generation <id>` exits 1 when the generation failed, with or without `--wait`.
 
-Timeouts and poll intervals (`timeoutMs`, `intervalMs`; CLI `--timeout`, `--poll-interval`, `--wait-timeout`) must be whole milliseconds from 1 to 2147483647; out-of-range values are rejected before any request is sent. `waitForGeneration`'s 429 backoff doubles the interval, at least 1 s and at most 30 s, and never polls sooner than the current interval.
+Timeouts and poll intervals (`timeoutMs`, `intervalMs`; CLI `--timeout`, `--poll-interval`, `--wait-timeout`) must be whole milliseconds from 1 to 2147483647; out-of-range values are rejected before any request is sent. `waitForGeneration`'s retry backoff (429 and the other resumable failures) doubles the interval, at least 1 s and at most 30 s, and never polls sooner than the current interval.
 
 **Trust model.** Responses are checked to be JSON objects. Their field shapes are typed but not validated at runtime, so a change on Ideogram's side shows up as missing fields rather than as an error.
 
@@ -523,6 +523,7 @@ Endpoint paths, limits, option lists and the validators:
 - Option lists as read-only tuples: `RENDERING_SPEEDS`, `STYLE_PRESETS`, `V4_RESOLUTIONS`, `V45_QUALITIES`, `V46_SIZES`, `UPSCALE_FACTORS`, `MINIMAX_H3_RESOLUTIONS`, `SEEDANCE_25_RESOLUTIONS`, `ASPECT_RATIOS`, `V4_ASPECT_RATIOS`, `AUTO_STYLE_TYPES`, `SVG_QUALITIES` and more. They are `as const`, so `(typeof V46_SIZES)[number]` is a union of the literal values; test an arbitrary string with `isOneOf(V46_SIZES, value)`.
 - `assertColorPalette(value)`: throws unless `value` is a valid v2 color palette (a preset name, `{ name }` or `{ members }`), and narrows it to `V2ColorPalette`.
 - `parseContextWindow(value, imageDims?, bounds?)`: parses a precise-edit context window (`'none'`, `'auto'` or `'y_min,x_min,y_max,x_max'`) into `{ yMin, xMin, yMax, xMax }`, or `null` for `'none'` / `'auto'`; throws on a malformed or out-of-rule region.
+- `V2_OPERATION_KEYS`: every `operation` key `validateV2Params` accepts (`V2OperationKey` is the union type).
 - `getIdeogramApiKey(cliApiKey?)`: the key from the CLI value or `IDEOGRAM_API_KEY`; throws when neither is set.
 - `redactApiKey(apiKey)`: `xxx...` plus the key's last 4 characters, for logs.
 - `BASE_URL` (`https://api.ideogram.ai`), `API_VERSION` (`v1`) and `DEFAULT_OUTPUT_DIR`.
@@ -636,6 +637,7 @@ A blocked URL throws an error such as `Access to internal/private IP addresses i
 - **`buildFormData` names and types file parts from their bytes** (`image.png` / `image/png`, `audio.wav` / `audio/wav`); 1.x sent every file as `image.jpg`.
 - **CLI helpers removed from `ideogram-api/utils`:** `saveImage`, `generateFilename`, `ensureDirectory`, `saveMetadata`, `pause`, `createSpinner` and the `logger` re-export. They were CLI plumbing and moved to an internal module. Copy the few lines you need or use Node's `fs` (`fs.mkdir(dir, { recursive: true })`, `fs.writeFile`). `setLogLevel` is still exported.
 - **A stricter SSRF guard.** `validateImageUrl` checks every address a hostname resolves to and refuses more ranges (see [Security](#security)); URLs that passed in 1.x may now be refused.
+- **v1 `numImages` outside 1..8 is now an error, including 0** (1.x sent 0 as 1 image). Multi-prompt v1 `generate` validates every prompt before the first request.
 - **Timeouts and poll intervals** (`timeoutMs`, `intervalMs`) must be whole milliseconds from 1 to 2147483647 and are rejected before any request is sent otherwise.
 
 **CLI**

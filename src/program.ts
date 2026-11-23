@@ -84,7 +84,7 @@ import {
   loadDotenvApiKey,
 } from './cli-io.js';
 import { logger, normalizeLogLevel } from './logger.js';
-import { discardFile } from './http.js';
+import { discardFile, serverText } from './http.js';
 import { setLogLevel, assertSquareImage, toError } from './utils.js';
 import {
   executeV2,
@@ -1079,11 +1079,9 @@ async function executeGenerate(
     }
     logger.info(`Processing ${prompts.length} prompt(s)`);
 
-    for (let i = 0; i < prompts.length; i++) {
-      const prompt = prompts[i];
-      logger.info(`\nProcessing prompt ${i + 1}/${prompts.length}: "${prompt}"`);
-
-      // Pre-flight validation - throws if invalid
+    // Pre-flight validation of EVERY prompt before the first request: each prompt is a billed
+    // generation, so a bad later prompt must be refused before an earlier one is paid for.
+    for (const prompt of prompts) {
       validateOperationParams('generate-v3', {
         prompt,
         aspectRatio: options.aspectRatio,
@@ -1092,6 +1090,11 @@ async function executeGenerate(
         magicPrompt: options.magicPrompt,
         numImages: parseIntOption('--num-images', options.numImages) ?? 1,
       });
+    }
+
+    for (let i = 0; i < prompts.length; i++) {
+      const prompt = prompts[i];
+      logger.info(`\nProcessing prompt ${i + 1}/${prompts.length}: "${prompt}"`);
 
       const spinner = createSpinner('Generating images...');
       spinner.start();
@@ -1158,7 +1161,7 @@ async function executeEdit(options: EditOptions, globalOptions: GlobalOptions): 
         image: options.image,
         mask: options.mask,
         magicPrompt: options.magicPrompt as 'AUTO' | 'ON' | 'OFF' | undefined,
-        numImages: parseIntOption('--num-images', options.numImages) ?? 1,
+        numImages: parseIntOption('--num-images', options.numImages, 1, 8) ?? 1,
         seed: parseIntOption('--seed', options.seed),
         renderingSpeed: options.renderingSpeed as
           | 'FLASH'
@@ -1212,7 +1215,7 @@ async function executeRemix(options: RemixOptions, globalOptions: GlobalOptions)
           | undefined,
         magicPrompt: options.magicPrompt as 'AUTO' | 'ON' | 'OFF' | undefined,
         negativePrompt: options.negativePrompt,
-        numImages: parseIntOption('--num-images', options.numImages) ?? 1,
+        numImages: parseIntOption('--num-images', options.numImages, 1, 8) ?? 1,
         seed: parseIntOption('--seed', options.seed),
         styleType: options.styleType as
           | 'AUTO'
@@ -1261,7 +1264,7 @@ async function executeReframe(
       api.reframe({
         image: options.image,
         resolution: options.resolution,
-        numImages: parseIntOption('--num-images', options.numImages) ?? 1,
+        numImages: parseIntOption('--num-images', options.numImages, 1, 8) ?? 1,
         seed: parseIntOption('--seed', options.seed),
         renderingSpeed: options.renderingSpeed as
           | 'FLASH'
@@ -1301,7 +1304,7 @@ async function executeReplaceBackground(
         prompt: options.prompt,
         image: options.image,
         magicPrompt: options.magicPrompt as 'AUTO' | 'ON' | 'OFF' | undefined,
-        numImages: parseIntOption('--num-images', options.numImages) ?? 1,
+        numImages: parseIntOption('--num-images', options.numImages, 1, 8) ?? 1,
         seed: parseIntOption('--seed', options.seed),
         renderingSpeed: options.renderingSpeed as
           | 'FLASH'
@@ -1349,7 +1352,7 @@ async function executeDescribe(
 
       console.log('\nDescriptions:\n');
       descriptions.forEach((desc, idx) => {
-        console.log(`${idx + 1}. ${desc}\n`);
+        console.log(`${idx + 1}. ${serverText(desc)}\n`);
       });
 
       // Save metadata
@@ -1399,7 +1402,7 @@ async function saveResults(
   // result URL (console.log: --log-level does not silence it), so no disk
   // failure below can lose them. The v1 response carries no generation id.
   images.forEach((img: ImageData, i: number) => {
-    if (img.url) console.log(`Result URL ${i + 1}/${images.length}: ${img.url}`);
+    if (img.url) console.log(`Result URL ${i + 1}/${images.length}: ${serverText(img.url)}`);
   });
 
   const outputDir = path.join(baseOutputDir, operation);
@@ -1476,7 +1479,9 @@ async function saveResults(
     }
   } catch (error) {
     console.error(
-      `✗ Download failed after ${savedPaths.size}/${images.length} image(s). Result URLs are in ${metadataPath}`
+      `✗ Download failed after ${savedPaths.size}/${images.length} image(s). ` +
+        'The images were generated and billed: do not run the command again.\n' +
+        `  The result URLs are in ${metadataPath} and may expire; open them directly to fetch the images.`
     );
     // Make the metadata true for what is on disk: the saved images get their paths.
     try {

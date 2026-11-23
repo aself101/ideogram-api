@@ -248,15 +248,42 @@ export function describeNetworkError(error: unknown, timeoutMs?: number): { mess
 
 /**
  * Make server-supplied text safe to print (CWE-150). Drops ANSI/OSC escape
- * sequences whole, then every remaining C0 control character except tab, DEL
- * and every C1 control character. CR and LF become a single space so two lines
- * do not run together. Call it where text enters a message, a log line or CLI
- * output; keep the raw value on `error.body` for programmatic use.
+ * sequences whole (the 7-bit ESC forms and the C1 forms: CSI U+009B with its
+ * parameter and final bytes, OSC U+009D through BEL or U+009C), then the Unicode
+ * bidi and format characters that reorder or hide text (U+200B-U+200F,
+ * U+2028/2029, U+202A-U+202E, U+2060-U+2069, U+061C, U+FEFF), then every remaining
+ * C0 control character except tab, DEL and every C1 control character. CR and LF
+ * become a single space so two lines do not run together. Call it where text
+ * enters a message, a log line or CLI output; keep the raw value on `error.body`
+ * for programmatic use.
+ *
+ * @param options - `keepNewlines`: leave LF (and turn CRLF into LF) for text whose
+ *   own line structure is ours, such as a multi-line help message. A lone CR
+ *   still becomes a space, and everything else is stripped as above.
  */
-export function sanitizeServerText(text: string): string {
-  return text
+export function sanitizeServerText(text: string, options: { keepNewlines?: boolean } = {}): string {
+  const stripped = text
     .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/g, '')
     .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
-    .replace(/[\r\n]+/g, ' ')
-    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
+    .replace(/\u009d[^\u0007\u009c]*(?:\u0007|\u009c)?/g, '')
+    // C1 CSI: parameter bytes and a final byte only. Intermediate bytes are not consumed, so a lone
+    // U+009B followed by ordinary text ("\u009b end") does not eat the first letter of that text.
+    .replace(/\u009b[0-?]*[@-~]/g, '')
+    .replace(/[\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2069\u061c\ufeff]/g, '');
+  const lines = options.keepNewlines
+    ? stripped.replace(/\r\n/g, '\n').replace(/\r+/g, ' ')
+    : stripped.replace(/[\r\n]+/g, ' ');
+  return lines.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
+}
+
+/**
+ * A server-supplied value as printable text. Strings go through
+ * sanitizeServerText; numbers print through String() (always safe, NaN and
+ * Infinity included); anything else is stringified and then sanitized. Use it
+ * wherever a success path prints or logs a field the server chose.
+ */
+export function serverText(value: unknown): string {
+  if (typeof value === 'string') return sanitizeServerText(value);
+  if (typeof value === 'number') return String(value);
+  return sanitizeServerText(String(value));
 }

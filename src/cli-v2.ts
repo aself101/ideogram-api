@@ -7,8 +7,7 @@
 import path from 'path';
 import fs from 'fs/promises';
 import { IdeogramAPI, IdeogramAPIError, isPriceQuote, BILLING_NOTE } from './api.js';
-import { sanitizeServerText } from './http.js';
-import { discardFile, MAX_TIMER_MS } from './http.js';
+import { sanitizeServerText, serverText, discardFile, MAX_TIMER_MS } from './http.js';
 import type {
   V2GenerationResponse,
   V2Acknowledgement,
@@ -122,22 +121,51 @@ export function describeError(err: Error & { code?: string }): string {
   }
   const rawCode = err.code ?? cause?.code;
   const code = typeof rawCode === 'string' && rawCode && !message.includes(rawCode) ? ` [${rawCode}]` : '';
-  return sanitizeServerText(`${message}${code}`);
+  // Server text was already flattened where it entered api.ts; what is left is ours, and the
+  // missing-key help is deliberately multi-line, so keep LF (62d0515 collapsed it to one line).
+  return sanitizeServerText(`${message}${code}`, { keepNewlines: true });
 }
+
+/** What an id must look like before it is pasted into a shell command: URL-safe base64, which is what Ideogram returns. */
+const SAFE_GENERATION_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+const GENERATION_ID_PLACEHOLDER = 'ideogram get-generation <generation-id> --wait';
 
 /**
  * The command that retrieves a generation. IDs are URL-safe base64, so about
  * 1 in 64 starts with '-', which commander would read as an option; such an
  * ID goes after `--` (found live 2026-11-22: -uaWvHfERk65rkfjaocs9w).
+ *
+ * The id comes from the server, and the command is meant to be pasted into a
+ * shell (CWE-78). An id that is not 1-128 characters of A-Z a-z 0-9 _ - is never
+ * interpolated: the placeholder command comes back instead, and the caller prints
+ * the id on its own line (see generationIdLine).
  */
 export function getGenerationCommand(generationId: string): string {
   // Defensive: an id that is not a string (a malformed response) must not crash the report.
-  if (typeof generationId !== 'string' || generationId === '') {
-    return 'ideogram get-generation <generation-id> --wait';
+  if (typeof generationId !== 'string' || !SAFE_GENERATION_ID.test(generationId)) {
+    return GENERATION_ID_PLACEHOLDER;
   }
   return generationId.startsWith('-')
     ? `ideogram get-generation --wait -- ${generationId}`
     : `ideogram get-generation ${generationId} --wait`;
+}
+
+/**
+ * The line that names a generation id the placeholder command could not carry:
+ * the id, sanitized, on its own line. Empty when the id went into the command itself.
+ */
+function generationIdLine(generationId: string): string {
+  return getGenerationCommand(generationId) === GENERATION_ID_PLACEHOLDER && typeof generationId === 'string' && generationId !== ''
+    ? `  Generation id: ${sanitizeServerText(generationId)}\n`
+    : '';
+}
+
+/** Print "Check on it with: <command>", plus the id's own line when the command holds a placeholder. */
+function printCheckOnIt(generationId: string): void {
+  console.log(`Check on it with: ${getGenerationCommand(generationId)}`);
+  const line = generationIdLine(generationId);
+  if (line) console.log(line.trimEnd());
 }
 
 /**
@@ -147,15 +175,20 @@ export function getGenerationCommand(generationId: string): string {
  * generationId) with status 400, 404, 410 or 422: the id was never seen to be
  * submitted by this call, so the line would claim a charge nothing shows.
  */
-export function shouldAppendBillingNote(err: {
-  message?: string;
-  status?: unknown;
-  resumable?: unknown;
-  possiblyBilled?: unknown;
-  generationId?: unknown;
-}): boolean {
+export function shouldAppendBillingNote(
+  err: {
+    message?: string;
+    status?: unknown;
+    resumable?: unknown;
+    possiblyBilled?: unknown;
+    generationId?: unknown;
+  },
+  options: { submittedHere?: boolean } = {}
+): boolean {
   if (err.possiblyBilled !== true || (err.message ?? '').endsWith(BILLING_NOTE)) return false;
+  // A wait this invocation started was preceded by its own submit: the id was seen submitted.
   const neverSeenSubmitted =
+    options.submittedHere !== true &&
     err.resumable !== true &&
     typeof err.generationId === 'string' &&
     (err.status === 400 || err.status === 404 || err.status === 410 || err.status === 422);
@@ -168,6 +201,11 @@ export function shouldAppendBillingNote(err: {
  * from the status, whatever `resumable` says), the plain resume command for a
  * resumable failure. Otherwise the billing note when shouldAppendBillingNote
  * says so. A generation the API reported as failed, or a 404, has nothing to resume.
+ *
+ * `submittedHere`: this invocation submitted the generation itself and the error
+ * comes from the wait that followed (--async --wait). A 400/404/410/422 poll then
+ * still gets the billing line, worded as "this command submitted it", because the
+ * submit is what may have been billed. A direct get-generation never sets it.
  */
 export function reportCommandError(
   err: Error & {
@@ -175,21 +213,26 @@ export function reportCommandError(
     status?: unknown;
     resumable?: unknown;
     possiblyBilled?: unknown;
-  }
+  },
+  options: { submittedHere?: boolean } = {}
 ): void {
   const described = describeError(err);
   console.error(`\n✗ Error: ${described}\n`);
-  const hasId = typeof err.generationId === 'string' && err.generationId !== '';
-  if (hasId && (err.status === 401 || err.status === 403)) {
+  const id = typeof err.generationId === 'string' && err.generationId !== '' ? err.generationId : undefined;
+  if (id !== undefined && (err.status === 401 || err.status === 403)) {
     console.error(
-      `  The generation may still complete. Fix the API key, then resume with: ${getGenerationCommand(err.generationId as string)}\n`
+      `  The generation may still complete. Fix the API key, then resume with: ${getGenerationCommand(id)}\n${generationIdLine(id)}`
     );
-  } else if (hasId && err.resumable === true) {
+  } else if (id !== undefined && err.resumable === true) {
     console.error(
-      `  The generation may still complete. Resume with: ${getGenerationCommand(err.generationId as string)}\n`
+      `  The generation may still complete. Resume with: ${getGenerationCommand(id)}\n${generationIdLine(id)}`
     );
-  } else if (shouldAppendBillingNote(err)) {
-    console.error(`  ${BILLING_NOTE}\n`);
+  } else if (shouldAppendBillingNote(err, options)) {
+    console.error(
+      options.submittedHere
+        ? `  This command submitted the generation, so it may have been billed. Check your usage before retrying.\n`
+        : `  ${BILLING_NOTE}\n`
+    );
   }
 }
 
@@ -450,9 +493,9 @@ function dryRunResultFrom(error: unknown): object | undefined {
 /** Print a dry-run price quote. */
 function printQuote(quote: PriceQuote): void {
   console.log('\nPrice quote (dry run: nothing generated or billed)');
-  console.log(`  Billing:  ${quote.quantity} x ${quote.billing_identifier}`);
+  console.log(`  Billing:  ${serverText(quote.quantity)} x ${serverText(quote.billing_identifier)}`);
   console.log(`  Price:    $${(quote.usd_micros / 1e6).toFixed(4)} (${quote.credit_millis / 1000} credits)`);
-  console.log(`  Qualifier: ${quote.qualifier}`);
+  console.log(`  Qualifier: ${serverText(quote.qualifier)}`);
   if (quote.upper_bound_usd_micros !== undefined) {
     console.log(`  Upper bound: $${(quote.upper_bound_usd_micros / 1e6).toFixed(4)}`);
   }
@@ -508,6 +551,8 @@ export async function executeV2(
   options: V2CliOptions,
   globalOptions: GlobalOptions
 ): Promise<void> {
+  // Set once this invocation holds a generation id from its own submit and goes on to wait for it.
+  let submittedHere = false;
   try {
     setLogLevel(globalOptions.logLevel);
 
@@ -674,11 +719,14 @@ export async function executeV2(
         parameters,
       });
     } else {
-      console.log(`Generation accepted: ${result.generation_id}`);
+      console.log(`Generation accepted: ${serverText(result.generation_id)}`);
       if (options.webhookUrl) {
         console.log(`Ideogram will POST the result to ${options.webhookUrl}`);
       }
+      // Printed before the wait too: an interrupted wait leaves the command on screen.
+      printCheckOnIt(result.generation_id);
       if (options.wait) {
+        submittedHere = true;
         const done = await waitWithSpinner(api, result.generation_id, pollInterval);
         await saveV2Results(done.data || [], operation, name, globalOptions.outputDir, {
           rawResponse: done,
@@ -688,14 +736,12 @@ export async function executeV2(
           usageCostUsdMicros: done.usage_cost_usd_micros,
           parameters,
         });
-      } else {
-        console.log(`Check on it with: ${getGenerationCommand(result.generation_id)}`);
       }
     }
     if (dryRunIgnored) throw new Error(DRY_RUN_BILLED_ERROR);
     console.log('\n✓ Done!\n');
   } catch (error) {
-    reportCommandError(toError(error));
+    reportCommandError(toError(error), { submittedHere });
     process.exit(1);
   }
 }
@@ -709,6 +755,8 @@ export async function executeAsyncV2(
   options: V2CliOptions,
   globalOptions: GlobalOptions
 ): Promise<void> {
+  // Set once this invocation holds a generation id from its own submit and goes on to wait for it.
+  let submittedHere = false;
   try {
     setLogLevel(globalOptions.logLevel);
 
@@ -826,11 +874,14 @@ export async function executeAsyncV2(
     if (rawOnly) {
       await saveRawResult(result, operation, options.prompt, globalOptions.outputDir, { ...options });
     }
-    console.log(`Generation accepted: ${result.generation_id}`);
+    console.log(`Generation accepted: ${serverText(result.generation_id)}`);
     if (options.webhookUrl) {
       console.log(`Ideogram will POST the result to ${options.webhookUrl}`);
     }
+    // Printed before the wait too: an interrupted wait leaves the command on screen.
+    printCheckOnIt(result.generation_id);
     if (options.wait) {
+      submittedHere = true;
       const done = await waitWithSpinner(api, result.generation_id, pollInterval, waitTimeout);
       await saveV2Results(done.data || [], operation, options.prompt, globalOptions.outputDir, {
         rawResponse: done,
@@ -838,13 +889,11 @@ export async function executeAsyncV2(
         usageCostUsdMicros: done.usage_cost_usd_micros,
         parameters: { ...options },
       });
-    } else {
-      console.log(`Check on it with: ${getGenerationCommand(result.generation_id)}`);
     }
     if (dryRunIgnored) throw new Error(DRY_RUN_BILLED_ERROR);
     console.log('\n✓ Done!\n');
   } catch (error) {
-    reportCommandError(toError(error));
+    reportCommandError(toError(error), { submittedHere });
     process.exit(1);
   }
 }
@@ -856,13 +905,14 @@ async function waitWithSpinner(
   intervalMs: number,
   timeoutMs?: number
 ): Promise<GenerationStatus> {
-  const spinner = createSpinner(`Waiting for generation ${generationId}...`);
+  const shownId = serverText(generationId);
+  const spinner = createSpinner(`Waiting for generation ${shownId}...`);
   spinner.start();
   try {
     const done = await api.waitForGeneration(generationId, {
       intervalMs,
       timeoutMs,
-      onPoll: (s) => spinner.update(`Generation ${generationId}: ${s.status}`),
+      onPoll: (s) => spinner.update(`Generation ${shownId}: ${serverText(s.status)}`),
     });
     spinner.stop('✓ Generation complete\n');
     return done;
@@ -892,7 +942,9 @@ export async function executeGetGeneration(
       ? await waitWithSpinner(api, generationId, pollInterval, waitTimeout)
       : await api.getGeneration(generationId);
 
-    console.log(`\nGeneration ${status.generation_id}: ${status.status} (created ${status.created})`);
+    console.log(
+      `\nGeneration ${serverText(status.generation_id)}: ${serverText(status.status)} (created ${serverText(status.created)})`
+    );
     if (status.failure_reason) console.log(`Failure reason: ${sanitizeServerText(String(status.failure_reason))}`);
     generationFailed = status.status === 'failed';
     if (status.usage_cost_usd_micros !== undefined) {
@@ -971,10 +1023,10 @@ async function saveV2Results(
   // The generation is already billed. Before anything touches the disk, print
   // its id and every result URL (console.log: --log-level does not silence it),
   // so no disk failure below can lose them.
-  if (meta.generationId) console.log(`Generation id: ${meta.generationId}`);
+  if (meta.generationId) console.log(`Generation id: ${serverText(meta.generationId)}`);
   items.forEach((raw, i) => {
     const url = (raw as GenerationDataItem).url;
-    if (url) console.log(`Result URL ${i + 1}/${items.length}: ${url}`);
+    if (url) console.log(`Result URL ${i + 1}/${items.length}: ${serverText(url)}`);
   });
 
   const outputDir = path.join(baseOutputDir, operation);
@@ -1026,7 +1078,7 @@ async function saveV2Results(
   if (items.length === 0) {
     console.log(`✓ Saved metadata: ${metadataPath}`);
     throw new Error(
-      `The API returned no results${meta.generationId ? ` for generation ${meta.generationId}` : ''}, ` +
+      `The API returned no results${meta.generationId ? ` for generation ${serverText(meta.generationId)}` : ''}, ` +
         `for a request that may have been billed. Check your usage before retrying. Details are in ${metadataPath}`
     );
   }
@@ -1074,7 +1126,7 @@ async function saveV2Results(
         continue;
       }
       if (kind && !kind.startsWith('image')) {
-        console.log(`⚠ Item ${label} is a ${kind}; not downloaded (see metadata)`);
+        console.log(`⚠ Item ${label} is a ${serverText(kind)}; not downloaded (see metadata)`);
         records.push({ index: i + 1, objectType: kind, url: item.url });
         continue;
       }
@@ -1105,9 +1157,15 @@ async function saveV2Results(
       });
     }
   } catch (error) {
+    const savedCount = records.filter((r) => typeof r.path === 'string').length;
+    const id = typeof meta.generationId === 'string' && meta.generationId !== '' ? meta.generationId : undefined;
     console.error(
-      `✗ Download failed after ${records.filter((r) => typeof r.path === 'string').length}/${items.length} item(s) saved. ` +
-        `Generation id: ${meta.generationId}. Result URLs are in ${metadataPath}`
+      `✗ Download failed after ${savedCount}/${items.length} item(s) saved. ` +
+        'The generation completed and was billed: do not run the command again.\n' +
+        (id !== undefined
+          ? `  Fetch the result again with: ${getGenerationCommand(id)}\n${generationIdLine(id)}` +
+            `  The result URLs are also in ${metadataPath}`
+          : `  The result URLs are in ${metadataPath} and may expire; open them directly to fetch the files.`)
     );
     // Make the metadata true for what is on disk: the items saved so far with
     // their paths, then the rest (the failed item and any after it) with their URLs.

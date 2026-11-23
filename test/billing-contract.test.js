@@ -40,7 +40,7 @@ vi.mock('fs/promises', async (importOriginal) => {
   return { ...actual, default: { ...actual.default, writeFile, rename } };
 });
 
-import { fetchMock, fakeResponse, ok, httpError, resetHttp } from './helpers/http.js';
+import { fetchMock, fakeResponse, ok, httpError, resetHttp, instantSleeps } from './helpers/http.js';
 import { IdeogramAPI, IdeogramAPIError } from '../src/api.js';
 import { validateImageUrl } from '../src/utils.js';
 import { saveMetadata } from '../src/cli-io.js';
@@ -122,6 +122,7 @@ const jsonFiles = (dir) => readdirSync(dir).filter((n) => n.endsWith('.json'));
 // ------------------------------------------------------------ 1. waitForGeneration
 describe('item 1: every error out of waitForGeneration is possiblyBilled and names the generation', () => {
   it('a poll that fails with a 500 is rewrapped as possiblyBilled: true', async () => {
+    instantSleeps(); // a 5xx is retried (5 times, backed off) before it is thrown
     fetchMock.mockReturnValue(httpError(500, { error: 'boom' }));
     const e = await caught(newApi().waitForGeneration('gen-1', { intervalMs: 1 }));
     expect(e).toBeInstanceOf(IdeogramAPIError);
@@ -139,6 +140,7 @@ describe('item 1: every error out of waitForGeneration is possiblyBilled and nam
   });
 
   it('a poll with no response is possiblyBilled: true', async () => {
+    instantSleeps(); // no response is retried (5 times, backed off) before it is thrown
     fetchMock.mockRejectedValue(Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } }));
     const e = await caught(newApi().waitForGeneration('gen-1', { intervalMs: 1 }));
     expect(e.code).toBe('ECONNRESET');

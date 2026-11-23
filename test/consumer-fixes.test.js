@@ -14,7 +14,7 @@ vi.mock('dns/promises', () => ({
   lookup: vi.fn(async () => ({ address: '8.8.8.8', family: 4 })),
 }));
 
-import { fetchMock, fakeResponse, resetHttp } from './helpers/http.js';
+import { fetchMock, fakeResponse, resetHttp, instantSleeps } from './helpers/http.js';
 import { IdeogramAPI, IdeogramAPIError, BILLING_NOTE } from '../src/api.js';
 import { setLogLevel } from '../src/utils.js';
 import { logger as moduleLogger } from '../src/logger.js';
@@ -95,6 +95,7 @@ describe('item 1: resumable', () => {
   });
 
   it('a 5xx is resumable', async () => {
+    instantSleeps(); // a 5xx is retried before it is thrown
     fetchMock.mockResolvedValue(fakeResponse(503, { error: 'down' }));
     const e = await wait(api());
     expect(e.resumable).toBe(true);
@@ -102,6 +103,7 @@ describe('item 1: resumable', () => {
   });
 
   it('a network failure with no response is resumable', async () => {
+    instantSleeps(); // no response is retried before it is thrown
     fetchMock.mockRejectedValue(Object.assign(new Error('fetch failed'), { cause: { code: 'ECONNRESET' } }));
     const e = await wait(api());
     expect(e.status).toBeUndefined();

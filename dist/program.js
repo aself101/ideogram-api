@@ -39,7 +39,7 @@ import { IdeogramAPI, extractImages, extractDescriptions, } from './api.js';
 import { getIdeogramApiKey, validateOperationParams, DEFAULT_OUTPUT_DIR, ASPECT_RATIOS, RESOLUTIONS, RENDERING_SPEEDS, STYLE_PRESETS, V4_RESOLUTIONS, V4_ASPECT_RATIOS, V4_RENDERING_SPEEDS, V4_OUTPUT_RESOLUTIONS, V45_QUALITIES, V45_BACKGROUNDS, V46_SIZES, AUTO_RESOLUTION_TIERS, AUTO_STYLE_TYPES, V2_COLOR_PALETTE_PRESETS, SVG_QUALITIES, UPSCALE_FACTORS, ASSET_TYPES, MINIMAX_H3_ASPECT_RATIOS, MINIMAX_H3_RESOLUTIONS, MINIMAX_H3_PROMPT_EXPANSION_MODES, SEEDANCE_25_ASPECT_RATIOS, SEEDANCE_25_RESOLUTIONS, } from './config.js';
 import { saveImage, saveMetadata, generateFilename, ensureDirectory, createSpinner, claimPath, loadDotenvApiKey, } from './cli-io.js';
 import { logger, normalizeLogLevel } from './logger.js';
-import { discardFile } from './http.js';
+import { discardFile, serverText } from './http.js';
 import { setLogLevel, assertSquareImage, toError } from './utils.js';
 import { executeV2, executeAsyncV2, executeGetGeneration, describeError, reportCommandError, fetchImage, parseIntOption, } from './cli-v2.js';
 // ES modules __dirname equivalent
@@ -809,10 +809,9 @@ async function executeGenerate(options, globalOptions) {
                 'looks like an unquoted prompt; quote it, or pass --allow-single-word-prompts');
         }
         logger.info(`Processing ${prompts.length} prompt(s)`);
-        for (let i = 0; i < prompts.length; i++) {
-            const prompt = prompts[i];
-            logger.info(`\nProcessing prompt ${i + 1}/${prompts.length}: "${prompt}"`);
-            // Pre-flight validation - throws if invalid
+        // Pre-flight validation of EVERY prompt before the first request: each prompt is a billed
+        // generation, so a bad later prompt must be refused before an earlier one is paid for.
+        for (const prompt of prompts) {
             validateOperationParams('generate-v3', {
                 prompt,
                 aspectRatio: options.aspectRatio,
@@ -821,6 +820,10 @@ async function executeGenerate(options, globalOptions) {
                 magicPrompt: options.magicPrompt,
                 numImages: parseIntOption('--num-images', options.numImages) ?? 1,
             });
+        }
+        for (let i = 0; i < prompts.length; i++) {
+            const prompt = prompts[i];
+            logger.info(`\nProcessing prompt ${i + 1}/${prompts.length}: "${prompt}"`);
             const spinner = createSpinner('Generating images...');
             spinner.start();
             let response;
@@ -872,7 +875,7 @@ async function executeEdit(options, globalOptions) {
             image: options.image,
             mask: options.mask,
             magicPrompt: options.magicPrompt,
-            numImages: parseIntOption('--num-images', options.numImages) ?? 1,
+            numImages: parseIntOption('--num-images', options.numImages, 1, 8) ?? 1,
             seed: parseIntOption('--seed', options.seed),
             renderingSpeed: options.renderingSpeed,
             styleType: options.styleType,
@@ -901,7 +904,7 @@ async function executeRemix(options, globalOptions) {
             renderingSpeed: options.renderingSpeed,
             magicPrompt: options.magicPrompt,
             negativePrompt: options.negativePrompt,
-            numImages: parseIntOption('--num-images', options.numImages) ?? 1,
+            numImages: parseIntOption('--num-images', options.numImages, 1, 8) ?? 1,
             seed: parseIntOption('--seed', options.seed),
             styleType: options.styleType,
             stylePreset: options.stylePreset,
@@ -932,7 +935,7 @@ async function executeReframe(options, globalOptions) {
         apiMethodCaller: (api) => api.reframe({
             image: options.image,
             resolution: options.resolution,
-            numImages: parseIntOption('--num-images', options.numImages) ?? 1,
+            numImages: parseIntOption('--num-images', options.numImages, 1, 8) ?? 1,
             seed: parseIntOption('--seed', options.seed),
             renderingSpeed: options.renderingSpeed,
             stylePreset: options.stylePreset,
@@ -955,7 +958,7 @@ async function executeReplaceBackground(options, globalOptions) {
             prompt: options.prompt,
             image: options.image,
             magicPrompt: options.magicPrompt,
-            numImages: parseIntOption('--num-images', options.numImages) ?? 1,
+            numImages: parseIntOption('--num-images', options.numImages, 1, 8) ?? 1,
             seed: parseIntOption('--seed', options.seed),
             renderingSpeed: options.renderingSpeed,
             stylePreset: options.stylePreset,
@@ -985,7 +988,7 @@ async function executeDescribe(options, globalOptions) {
             const descriptions = extractDescriptions(response);
             console.log('\nDescriptions:\n');
             descriptions.forEach((desc, idx) => {
-                console.log(`${idx + 1}. ${desc}\n`);
+                console.log(`${idx + 1}. ${serverText(desc)}\n`);
             });
             // Save metadata
             const outputDir = path.join(globalOpts.outputDir, 'describe');
@@ -1021,7 +1024,7 @@ async function saveResults(response, operation, promptOrName, baseOutputDir, opt
     // failure below can lose them. The v1 response carries no generation id.
     images.forEach((img, i) => {
         if (img.url)
-            console.log(`Result URL ${i + 1}/${images.length}: ${img.url}`);
+            console.log(`Result URL ${i + 1}/${images.length}: ${serverText(img.url)}`);
     });
     const outputDir = path.join(baseOutputDir, operation);
     // Write the metadata first, with every image's URL, so a failed download
@@ -1087,7 +1090,9 @@ async function saveResults(response, operation, promptOrName, baseOutputDir, opt
         }
     }
     catch (error) {
-        console.error(`✗ Download failed after ${savedPaths.size}/${images.length} image(s). Result URLs are in ${metadataPath}`);
+        console.error(`✗ Download failed after ${savedPaths.size}/${images.length} image(s). ` +
+            'The images were generated and billed: do not run the command again.\n' +
+            `  The result URLs are in ${metadataPath} and may expire; open them directly to fetch the images.`);
         // Make the metadata true for what is on disk: the saved images get their paths.
         try {
             await writeMetadata(metadataPath, savedPaths);

@@ -10,20 +10,20 @@
   },
   "exports": {
     ".": {
-      "import": "./dist/api.js",
-      "types": "./dist/api.d.ts"
+      "types": "./dist/api.d.ts",
+      "import": "./dist/api.js"
     },
     "./api": {
-      "import": "./dist/api.js",
-      "types": "./dist/api.d.ts"
+      "types": "./dist/api.d.ts",
+      "import": "./dist/api.js"
     },
     "./utils": {
-      "import": "./dist/utils.js",
-      "types": "./dist/utils.d.ts"
+      "types": "./dist/utils.d.ts",
+      "import": "./dist/utils.js"
     },
     "./config": {
-      "import": "./dist/config.js",
-      "types": "./dist/config.d.ts"
+      "types": "./dist/config.d.ts",
+      "import": "./dist/config.js"
     }
   },
   "files": [

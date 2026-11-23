@@ -73,6 +73,11 @@ export declare function describeError(err: Error & {
  * The command that retrieves a generation. IDs are URL-safe base64, so about
  * 1 in 64 starts with '-', which commander would read as an option; such an
  * ID goes after `--` (found live 2026-11-22: -uaWvHfERk65rkfjaocs9w).
+ *
+ * The id comes from the server, and the command is meant to be pasted into a
+ * shell (CWE-78). An id that is not 1-128 characters of A-Z a-z 0-9 _ - is never
+ * interpolated: the placeholder command comes back instead, and the caller prints
+ * the id on its own line (see generationIdLine).
  */
 export declare function getGenerationCommand(generationId: string): string;
 /**
@@ -88,6 +93,8 @@ export declare function shouldAppendBillingNote(err: {
     resumable?: unknown;
     possiblyBilled?: unknown;
     generationId?: unknown;
+}, options?: {
+    submittedHere?: boolean;
 }): boolean;
 /**
  * Print a failed command's error, and for a polling failure that carries a
@@ -95,12 +102,19 @@ export declare function shouldAppendBillingNote(err: {
  * from the status, whatever `resumable` says), the plain resume command for a
  * resumable failure. Otherwise the billing note when shouldAppendBillingNote
  * says so. A generation the API reported as failed, or a 404, has nothing to resume.
+ *
+ * `submittedHere`: this invocation submitted the generation itself and the error
+ * comes from the wait that followed (--async --wait). A 400/404/410/422 poll then
+ * still gets the billing line, worded as "this command submitted it", because the
+ * submit is what may have been billed. A direct get-generation never sets it.
  */
 export declare function reportCommandError(err: Error & {
     generationId?: unknown;
     status?: unknown;
     resumable?: unknown;
     possiblyBilled?: unknown;
+}, options?: {
+    submittedHere?: boolean;
 }): void;
 /**
  * Fetch image bytes from a URL with SSRF protection on the URL and every

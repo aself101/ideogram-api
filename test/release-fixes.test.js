@@ -15,7 +15,7 @@ vi.mock('dns/promises', () => ({
   lookup: vi.fn(async () => ({ address: '8.8.8.8', family: 4 })),
 }));
 
-import { fetchMock, fakeResponse, resetHttp } from './helpers/http.js';
+import { fetchMock, fakeResponse, resetHttp, instantSleeps } from './helpers/http.js';
 import { IdeogramAPI, IdeogramAPIError, BILLING_NOTE, classifyPollFailure } from '../src/api.js';
 import { sanitizeServerText } from '../src/http.js';
 import { normalizeLogLevel, logger as moduleLogger } from '../src/logger.js';
@@ -117,6 +117,7 @@ describe('item 1: classifyPollFailure and the resumable rule', () => {
     [401, false],
     [403, false],
   ])('waitForGeneration after HTTP %i: resumable %s', async (status, resumable) => {
+    instantSleeps(); // 408, 425 and 503 are retried before they are thrown
     fetchMock.mockResolvedValue(fakeResponse(status, { error: 'x', message: 'x' }));
     const e = await wait(api());
     expect(e).toBeInstanceOf(IdeogramAPIError);
@@ -418,6 +419,12 @@ describe('item 6: boundaries', () => {
     expect(res.exit).toBe(1);
     expect(err()).toContain('2 prompts, each a single word');
     expect(fetchMock).not.toHaveBeenCalled();
+
+    // The flag lifts the refusal: the request is sent (the empty result then ends the command).
+    errors.length = 0;
+    await run('generate', '-p', 'red', 'fox', '--allow-single-word-prompts');
+    expect(err()).not.toContain('each a single word');
+    expect(fetchMock).toHaveBeenCalled();
   });
 
   it('EACCES on an image stat prints "Permission denied reading image file"', async () => {

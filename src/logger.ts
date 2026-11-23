@@ -15,16 +15,23 @@ export const ALL_LOG_LEVELS = ['error', 'warn', 'info', 'http', 'verbose', 'debu
 /** The levels a caller may ask for. */
 export const LOG_LEVELS = ['error', 'warn', 'info', 'debug'] as const;
 
+/** One of LOG_LEVELS. */
+export type LogLevel = (typeof LOG_LEVELS)[number];
+
+function isLogLevel(value: unknown): value is LogLevel {
+  return (LOG_LEVELS as readonly unknown[]).includes(value);
+}
+
 /**
- * Lowercase a requested log level and check it is one of LOG_LEVELS.
+ * Trim and lowercase a requested log level and check it is one of LOG_LEVELS.
  * @throws Error naming the bad value and the valid ones
  */
-export function normalizeLogLevel(level: string, name = 'log level'): string {
+export function normalizeLogLevel(level: string, name = 'log level'): LogLevel {
   const normalized = typeof level === 'string' ? level.trim().toLowerCase() : level;
-  if (!(LOG_LEVELS as readonly unknown[]).includes(normalized)) {
+  if (!isLogLevel(normalized)) {
     throw new Error(`Invalid ${name} '${String(level)}'. Use one of: ${LOG_LEVELS.join(', ')}`);
   }
-  return normalized as string;
+  return normalized;
 }
 
 export const logger = winston.createLogger({

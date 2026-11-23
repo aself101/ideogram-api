@@ -8,7 +8,7 @@
  * AbortSignal.timeout for that request).
  */
 
-import { vi, expect } from 'vitest';
+import { vi, expect, onTestFinished } from 'vitest';
 
 export const fetchMock = vi.fn();
 vi.stubGlobal('fetch', fetchMock);
@@ -78,4 +78,21 @@ export function formNames(config) {
 /** Spy on a client's request path to read the options each call passed (e.g. maxBodyBytes). */
 export function spyRequests(api) {
   return vi.spyOn(api, '_request');
+}
+
+/**
+ * Make setTimeout run its callback at once for the rest of the current test, and return the
+ * list of delays it was asked for. waitForGeneration backs off 1 s, 2 s, 4 s ... between
+ * retried polls (a 429 or another transient failure); this keeps those tests fast and lets
+ * them assert the delays. Restored when the test finishes.
+ */
+export function instantSleeps() {
+  const sleeps = [];
+  const spy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, ms) => {
+    sleeps.push(ms);
+    fn();
+    return 0;
+  });
+  onTestFinished(() => spy.mockRestore());
+  return sleeps;
 }

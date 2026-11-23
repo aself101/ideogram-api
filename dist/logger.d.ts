@@ -11,10 +11,12 @@ import winston from 'winston';
 export declare const ALL_LOG_LEVELS: string[];
 /** The levels a caller may ask for. */
 export declare const LOG_LEVELS: readonly ["error", "warn", "info", "debug"];
+/** One of LOG_LEVELS. */
+export type LogLevel = (typeof LOG_LEVELS)[number];
 /**
- * Lowercase a requested log level and check it is one of LOG_LEVELS.
+ * Trim and lowercase a requested log level and check it is one of LOG_LEVELS.
  * @throws Error naming the bad value and the valid ones
  */
-export declare function normalizeLogLevel(level: string, name?: string): string;
+export declare function normalizeLogLevel(level: string, name?: string): LogLevel;
 export declare const logger: winston.Logger;
 //# sourceMappingURL=logger.d.ts.map

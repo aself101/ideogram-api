@@ -26,8 +26,8 @@
  * The v3 operations and the v2 image default (`async` unset) are synchronous.
  */
 import winston from 'winston';
-import { formDataSize, readBodyWithLimit, describeNetworkError, describeValue, assertTimerMs, sanitizeServerText, ResponseTooLargeError, } from './http.js';
-import { BASE_URL, ENDPOINTS, redactApiKey } from './config.js';
+import { formDataSize, readBodyWithLimit, describeNetworkError, describeValue, assertTimerMs, sanitizeServerText, serverText, ResponseTooLargeError, } from './http.js';
+import { BASE_URL, ENDPOINTS, redactApiKey, V2_LIMITS } from './config.js';
 import { logger as moduleLogger, ALL_LOG_LEVELS, normalizeLogLevel } from './logger.js';
 import { buildFormData, loadImageAsBuffer, loadAudioAsBuffer, assertSquareImage, toError } from './utils.js';
 /** Default request timeout for v1 (Ideogram 3.0) endpoints, unchanged since 1.0. */
@@ -84,6 +84,32 @@ export function classifyPollFailure(failure) {
     }
     return { resumable: true };
 }
+/**
+ * The v1 `numImages` to send: 1 when unset (undefined or null), otherwise the
+ * value, which must be an integer from 1 to 8. An explicit 0 used to become a
+ * billed 1-image request through `|| 1`; now it is refused before anything is sent.
+ */
+function v1NumImages(value) {
+    const n = value ?? 1;
+    const { min, max } = V2_LIMITS.numImages;
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < min || n > max) {
+        throw new Error(`numImages must be an integer between ${min} and ${max} (got ${describeValue(n)})`);
+    }
+    return n;
+}
+/** Consecutive failed polls waitForGeneration tolerates: the 5th in a row is thrown (a good poll resets the count). */
+const MAX_POLL_FAILURES = 5;
+/**
+ * Whether waitForGeneration retries a failed poll: it can be resumable AND a
+ * retry can plausibly clear it (no response, a timeout, 5xx, 408, 425). Other
+ * resumable failures (402, other 4xx) are the caller's to act on, so they throw.
+ */
+function isRetryablePollFailure(error) {
+    if (!classifyPollFailure(error).resumable)
+        return false;
+    const { status } = error;
+    return status === undefined || status >= 500 || status === 408 || status === 425;
+}
 /** Bytes of an unparseable response body kept on the error. */
 const BODY_EXCERPT_BYTES = 500;
 /** Normalize a v2 color palette: a bare preset name becomes `{ name }`. */
@@ -126,6 +152,9 @@ export class IdeogramAPIError extends Error {
      */
     possiblyBilled;
     /**
+     * Set by waitForGeneration and getGeneration (the two polling methods); false
+     * on every error from any other method.
+     *
      * True when calling getGeneration or waitForGeneration again with
      * `generationId` can still succeed. Everything that fails while polling is
      * resumable (no response or timeout, 5xx, 408, 425, 429, 402, any other 4xx,
@@ -420,9 +449,10 @@ export class IdeogramAPI {
         }
         // Validate Content-Type of response
         if (!contentType.includes('application/json')) {
-            this.logger.warn(`Unexpected Content-Type in response: ${contentType || '(none)'}`);
+            const shownType = sanitizeServerText(contentType) || '(none)';
+            this.logger.warn(`Unexpected Content-Type in response: ${shownType}`);
             this.logger.error(`Invalid response format (HTTP ${response.status}).${billedNote}`);
-            throw new IdeogramAPIError(`Invalid response format from API (HTTP ${response.status}, Content-Type: ${contentType || '(none)'})`, { status: response.status, body: raw.toString('utf8', 0, BODY_EXCERPT_BYTES), possiblyBilled: billable });
+            throw new IdeogramAPIError(`Invalid response format from API (HTTP ${response.status}, Content-Type: ${shownType})`, { status: response.status, body: raw.toString('utf8', 0, BODY_EXCERPT_BYTES), possiblyBilled: billable });
         }
         let parsed;
         try {
@@ -482,13 +512,13 @@ export class IdeogramAPI {
     /** Log the outcome of a v2 call without assuming its shape. */
     _logV2Result(label, result) {
         if (isPriceQuote(result)) {
-            this.logger.info(`${label} dry run: ${result.quantity} x ${result.billing_identifier} = $${(result.usd_micros / 1e6).toFixed(4)} (${result.credit_millis / 1000} credits, ${result.qualifier})`);
+            this.logger.info(`${label} dry run: ${serverText(result.quantity)} x ${serverText(result.billing_identifier)} = $${(result.usd_micros / 1e6).toFixed(4)} (${result.credit_millis / 1000} credits, ${serverText(result.qualifier)})`);
         }
         else if ('data' in result && result.data) {
-            this.logger.info(`${label}: ${result.data.length} image(s) (generation ${result.generation_id})`);
+            this.logger.info(`${label}: ${result.data.length} image(s) (generation ${serverText(result.generation_id)})`);
         }
         else {
-            this.logger.info(`${label}: accepted as generation ${result.generation_id}; poll to retrieve`);
+            this.logger.info(`${label}: accepted as generation ${serverText(result.generation_id)}; poll to retrieve`);
         }
     }
     /**
@@ -517,7 +547,7 @@ export class IdeogramAPI {
             rendering_speed: params.renderingSpeed || 'DEFAULT',
             magic_prompt: params.magicPrompt || 'AUTO',
             negative_prompt: params.negativePrompt,
-            num_images: params.numImages || 1,
+            num_images: v1NumImages(params.numImages),
             color_palette: params.colorPalette,
             style_codes: params.styleCodes,
             style_type: params.styleType,
@@ -557,7 +587,7 @@ export class IdeogramAPI {
             image: imageBuffer,
             mask: maskBuffer,
             magic_prompt: params.magicPrompt || 'AUTO',
-            num_images: params.numImages || 1,
+            num_images: v1NumImages(params.numImages),
             seed: params.seed,
             rendering_speed: params.renderingSpeed || 'DEFAULT',
             style_type: params.styleType,
@@ -601,7 +631,7 @@ export class IdeogramAPI {
             rendering_speed: params.renderingSpeed || 'DEFAULT',
             magic_prompt: params.magicPrompt || 'AUTO',
             negative_prompt: params.negativePrompt,
-            num_images: params.numImages || 1,
+            num_images: v1NumImages(params.numImages),
             color_palette: params.colorPalette,
             style_codes: params.styleCodes,
             style_type: params.styleType,
@@ -635,7 +665,7 @@ export class IdeogramAPI {
         const formData = buildFormData({
             image: imageBuffer,
             resolution: params.resolution,
-            num_images: params.numImages || 1,
+            num_images: v1NumImages(params.numImages),
             seed: params.seed,
             rendering_speed: params.renderingSpeed || 'DEFAULT',
             style_preset: params.stylePreset,
@@ -671,7 +701,7 @@ export class IdeogramAPI {
             prompt: params.prompt,
             image: imageBuffer,
             magic_prompt: params.magicPrompt || 'AUTO',
-            num_images: params.numImages || 1,
+            num_images: v1NumImages(params.numImages),
             seed: params.seed,
             rendering_speed: params.renderingSpeed || 'DEFAULT',
             style_preset: params.stylePreset,
@@ -708,7 +738,7 @@ export class IdeogramAPI {
             maxBodyBytes: BODY_LIMITS.upscale,
         });
         if (!isPriceQuote(result) && result.data) {
-            this.logger.info(`Upscaled to ${result.width}x${result.height}`);
+            this.logger.info(`Upscaled to ${serverText(result.width)}x${serverText(result.height)}`);
         }
         else {
             this._logV2Result('Upscale', result);
@@ -1100,7 +1130,8 @@ export class IdeogramAPI {
         if (!generationId || typeof generationId !== 'string') {
             throw new Error(`generationId is required: pass the generation_id string from a v2 response (got ${describeValue(generationId)})`);
         }
-        const timeoutMs = options.timeoutMs ?? V1_TIMEOUT_MS;
+        // A null options argument (a JS caller's `getGeneration(id, null)`) means no options.
+        const timeoutMs = options?.timeoutMs ?? V1_TIMEOUT_MS;
         assertTimerMs('timeoutMs', timeoutMs);
         try {
             return await this._request({
@@ -1113,7 +1144,21 @@ export class IdeogramAPI {
         catch (error) {
             if (error instanceof IdeogramAPIError) {
                 // Name the generation and say whether asking again can work (a GET is never billed: possiblyBilled stays false).
-                Object.assign(error, { generationId, resumable: classifyPollFailure(error).resumable });
+                // The fields are readonly, so build the error again with them rather than assigning over them.
+                throw new IdeogramAPIError(error.message, {
+                    status: error.status,
+                    rejectReason: error.rejectReason,
+                    maxInflightRequests: error.maxInflightRequests,
+                    failureReason: error.failureReason,
+                    body: error.body,
+                    code: error.code,
+                    possiblyBilled: error.possiblyBilled,
+                    generationId,
+                    generationStatus: error.generationStatus,
+                    result: error.result,
+                    resumable: classifyPollFailure(error).resumable,
+                    cause: error.cause,
+                });
             }
             throw error;
         }
@@ -1121,7 +1166,13 @@ export class IdeogramAPI {
     /**
      * Poll a generation until it completes or fails.
      * A 429 while polling backs off (doubling the interval, at least 1s and up to 30s, and never
-     * shorter than the interval in use) and keeps polling.
+     * shorter than the interval in use) and keeps polling. So does any other resumable poll
+     * failure that a retry can plausibly clear (no response, a timeout, 5xx, 408, 425), with
+     * the same backoff, while time remains before the deadline; the 5th failure in a row is thrown
+     * (the count resets after a successful poll); each retry is logged at warn. A permanent failure
+     * (see `classifyPollFailure`: 400, 401, 403, 404, 410, 422, an over-size body, a failed
+     * generation) throws at once, and so does an `onPoll` callback that throws. When the
+     * retries run out or the deadline passes, the error is thrown with `resumable: true`.
      *
      * @param generationId - The generation_id returned by a v2 request
      * @param options - Poll interval, overall timeout, per-poll callback
@@ -1137,8 +1188,10 @@ export class IdeogramAPI {
      * const done = await api.waitForGeneration(ack.generation_id);
      */
     async waitForGeneration(generationId, options = {}) {
-        const baseInterval = options.intervalMs ?? 2000;
-        const timeoutMs = options.timeoutMs ?? 600000;
+        // A null options argument means no options, so the argument checks below still map to EINVALIDARGUMENT.
+        const opts = options ?? {};
+        const baseInterval = opts.intervalMs ?? 2000;
+        const timeoutMs = opts.timeoutMs ?? 600000;
         try {
             if (!generationId || typeof generationId !== 'string') {
                 throw new Error(`generationId is required: pass the generation_id string from a v2 response (got ${describeValue(generationId)})`);
@@ -1151,6 +1204,7 @@ export class IdeogramAPI {
         }
         const deadline = Date.now() + timeoutMs;
         let interval = baseInterval;
+        let consecutiveFailures = 0;
         for (;;) {
             let status;
             try {
@@ -1158,17 +1212,25 @@ export class IdeogramAPI {
                 const pollTimeout = Math.max(1, Math.min(V1_TIMEOUT_MS, deadline - Date.now()));
                 status = await this.getGeneration(generationId, { timeoutMs: pollTimeout });
                 interval = baseInterval;
+                consecutiveFailures = 0;
             }
             catch (error) {
                 if (error instanceof IdeogramAPIError && error.status === 429) {
                     // Double (at least 1s, at most 30s), but never poll sooner than the
                     // current interval: a base interval above 30s must not be shortened.
                     interval = Math.max(interval, Math.min(Math.max(interval * 2, 1000), 30000));
-                    this.logger.warn(`Rate limited while polling ${generationId}; retrying in ${interval}ms`);
+                    this.logger.warn(`Rate limited while polling ${serverText(generationId)}; retrying in ${interval}ms`);
                 }
                 else if (error instanceof IdeogramAPIError && error.code === 'ETIMEDOUT' && Date.now() >= deadline) {
                     // The capped last poll ran into the overall deadline: that is the wait timing out.
                     throw new IdeogramAPIError(`Timed out after ${timeoutMs}ms waiting for generation ${generationId} (it may still complete; poll getGeneration later)`, { generationId, possiblyBilled: true, resumable: true, cause: error });
+                }
+                else if (error instanceof IdeogramAPIError &&
+                    isRetryablePollFailure(error) &&
+                    consecutiveFailures + 1 < MAX_POLL_FAILURES) {
+                    consecutiveFailures++;
+                    interval = Math.max(interval, Math.min(Math.max(interval * 2, 1000), 30000));
+                    this.logger.warn(`Poll of ${serverText(generationId)} failed (${error.status ?? error.code ?? 'no response'}): retrying in ${interval}ms (failure ${consecutiveFailures}/${MAX_POLL_FAILURES})`);
                 }
                 else if (error instanceof IdeogramAPIError) {
                     // Polling again can succeed unless the failure is permanent (see classifyPollFailure).
@@ -1207,7 +1269,7 @@ export class IdeogramAPI {
             }
             if (status) {
                 try {
-                    options.onPoll?.(status);
+                    opts.onPoll?.(status);
                 }
                 catch (error) {
                     // The generation was already submitted and billed: a throwing callback must not hide its id.
