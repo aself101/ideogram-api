@@ -135,6 +135,19 @@ export function getGenerationCommand(generationId: string): string {
 }
 
 /**
+ * Print a failed command's error, and for a failed wait the command that
+ * resumes it. A generation that was submitted keeps running (and stays billed)
+ * after a polling failure, so the error line is followed by how to pick it up.
+ * A generation the API reported as failed has nothing to resume.
+ */
+export function reportCommandError(err: Error & { generationId?: unknown; failureReason?: unknown }): void {
+  console.error(`\n✗ Error: ${describeError(err)}\n`);
+  if (typeof err.generationId === 'string' && err.generationId && err.failureReason === undefined) {
+    console.error(`  The generation may still complete. Resume with: ${getGenerationCommand(err.generationId)}\n`);
+  }
+}
+
+/**
  * Fetch image bytes from a URL with SSRF protection on the URL and every
  * redirect. 200MB cap: 8k transparent PNGs can be large.
  */
@@ -294,6 +307,19 @@ async function preflightV2Images(operation: V2OperationKey, options: V2CliOption
       }
     }
   }
+}
+
+/** Final error of a --dry-run that was answered with a real result. */
+const DRY_RUN_BILLED_ERROR =
+  'The --dry-run request returned a real result instead of a price quote: it was NOT a dry run and may have been billed. ' +
+  'The result was kept (saved or listed above); check your usage.';
+
+/** Loud warning, printed before the unexpected result is saved. */
+function warnDryRunBilled(): void {
+  console.error(
+    '\n⚠ WARNING: --dry-run was requested but the API returned a real result, not a price quote.\n' +
+      '  The request may have run and been billed. The result is saved below; check your usage.\n'
+  );
 }
 
 /** Print a dry-run price quote. */
@@ -481,7 +507,7 @@ export async function executeV2(
         default:
           throw new Error(`${operation} is not a synchronous image operation`);
       }
-      spinner.stop(options.dryRun ? '✓ Priced\n' : '✓ Request complete\n');
+      spinner.stop(options.dryRun && isPriceQuote(result) ? '✓ Priced\n' : '✓ Request complete\n');
     } catch (error) {
       spinner.stop('✗ Request failed\n');
       throw error;
@@ -492,6 +518,7 @@ export async function executeV2(
       console.log('\n✓ Done!\n');
       return;
     }
+    if (options.dryRun) warnDryRunBilled();
 
     const parameters = { ...options };
     const name = options.prompt ?? 'upscale';
@@ -524,10 +551,10 @@ export async function executeV2(
         console.log(`Check on it with: ${getGenerationCommand(result.generation_id)}`);
       }
     }
+    if (options.dryRun) throw new Error(DRY_RUN_BILLED_ERROR);
     console.log('\n✓ Done!\n');
   } catch (error) {
-    const err = toError(error);
-    console.error(`\n✗ Error: ${describeError(err)}\n`);
+    reportCommandError(toError(error));
     process.exit(1);
   }
 }
@@ -634,7 +661,7 @@ export async function executeAsyncV2(
         default:
           throw new Error(`${operation} is not an asynchronous operation`);
       }
-      spinner.stop(options.dryRun ? '✓ Priced\n' : '✓ Submitted\n');
+      spinner.stop(options.dryRun && isPriceQuote(result) ? '✓ Priced\n' : '✓ Submitted\n');
     } catch (error) {
       spinner.stop('✗ Request failed\n');
       throw error;
@@ -645,6 +672,7 @@ export async function executeAsyncV2(
       console.log('\n✓ Done!\n');
       return;
     }
+    if (options.dryRun) warnDryRunBilled();
 
     console.log(`Generation accepted: ${result.generation_id}`);
     if (options.webhookUrl) {
@@ -660,10 +688,10 @@ export async function executeAsyncV2(
     } else {
       console.log(`Check on it with: ${getGenerationCommand(result.generation_id)}`);
     }
+    if (options.dryRun) throw new Error(DRY_RUN_BILLED_ERROR);
     console.log('\n✓ Done!\n');
   } catch (error) {
-    const err = toError(error);
-    console.error(`\n✗ Error: ${describeError(err)}\n`);
+    reportCommandError(toError(error));
     process.exit(1);
   }
 }
@@ -727,8 +755,7 @@ export async function executeGetGeneration(
     }
     console.log('');
   } catch (error) {
-    const err = toError(error);
-    console.error(`\n✗ Error: ${describeError(err)}\n`);
+    reportCommandError(toError(error));
     process.exit(1);
   }
 }
@@ -786,15 +813,29 @@ async function saveV2Results(
     return;
   }
 
+  // The generation is already billed. Before anything touches the disk, print
+  // its id and every result URL (console.log: --log-level does not silence it),
+  // so no disk failure below can lose them.
+  console.log(`Generation id: ${meta.generationId}`);
+  items.forEach((raw, i) => {
+    const url = (raw as GenerationDataItem).url;
+    if (url) console.log(`Result URL ${i + 1}/${items.length}: ${url}`);
+  });
+
   const outputDir = path.join(baseOutputDir, operation);
-  await ensureDirectory(outputDir);
+  const timestamp = new Date().toISOString();
+  const pending = (from: number) =>
+    items.slice(from).map((raw, k) => {
+      const item = raw as GenerationDataItem;
+      return { index: from + k + 1, objectType: item.object_type, url: item.url, assetId: item.asset_id, saved: false };
+    });
 
   // Write the metadata first, with every item's URL, so a failed download
   // cannot lose the generation id or the URLs of the items not yet fetched.
   // It is rewritten with the saved paths once the downloads finish.
-  const metadataPath = await claimPath(path.join(outputDir, generateFilename(promptOrName, 'json')));
+  let metadataPath: string | undefined;
   const writeMetadata = (saved: Array<Record<string, unknown>>) =>
-    saveMetadata(metadataPath, {
+    saveMetadata(metadataPath as string, {
       operation,
       timestamp,
       generationId: meta.generationId,
@@ -804,13 +845,19 @@ async function saveV2Results(
       parameters: meta.parameters,
       response: { itemCount: items.length, items: saved },
     });
-  const timestamp = new Date().toISOString();
-  await writeMetadata(
-    items.map((raw, i) => {
-      const item = raw as GenerationDataItem;
-      return { index: i + 1, objectType: item.object_type, url: item.url, assetId: item.asset_id, saved: false };
-    })
-  );
+  try {
+    await ensureDirectory(outputDir);
+    metadataPath = await claimPath(path.join(outputDir, generateFilename(promptOrName, 'json')));
+    await writeMetadata(pending(0));
+  } catch (error) {
+    // The empty placeholder claimPath made would otherwise be left behind.
+    if (metadataPath) await discardFile(metadataPath, 'the unfinished metadata file');
+    console.error(
+      `✗ The result was generated (and billed); its generation id and URLs are printed above. ` +
+        `Nothing could be written under ${outputDir}: ${toError(error).message}`
+    );
+    throw error;
+  }
 
   const saved: Array<Record<string, unknown>> = [];
   try {
@@ -889,6 +936,16 @@ async function saveV2Results(
       `✗ Download failed after ${saved.length}/${items.length} item(s). ` +
         `Generation id: ${meta.generationId}. Result URLs are in ${metadataPath}`
     );
+    // Make the metadata true for what is on disk: the items saved so far with
+    // their paths, then the rest (the failed item and any after it) with their URLs.
+    try {
+      await writeMetadata([...saved, ...pending(saved.length)]);
+    } catch (metadataError) {
+      console.error(
+        `✗ Could not update ${metadataPath} with the saved files: ${toError(metadataError).message}. ` +
+          'Its entries still read as unsaved; the files that were saved are listed above.'
+      );
+    }
     throw error;
   }
 

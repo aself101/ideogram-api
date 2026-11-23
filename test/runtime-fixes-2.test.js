@@ -200,6 +200,8 @@ describe('item 1: a failed cleanup is never swallowed', () => {
 
   it('no swallow in src/ is silent: every `.catch(() => ...)` and empty catch is marked "best effort" and none guards I/O it should report', () => {
     const srcDir = new URL('../src/', import.meta.url);
+    // "best effort" or the audit marker `AUDIT-OK(no_empty_catch): <reason>`
+    const MARKER = /best effort|AUDIT-OK\(no_empty_catch\)/;
     const offenders = [];
     for (const name of readdirSync(srcDir, { recursive: true })) {
       if (!String(name).endsWith('.ts')) continue;
@@ -207,7 +209,7 @@ describe('item 1: a failed cleanup is never swallowed', () => {
       lines.forEach((line, i) => {
         const prev = lines[i - 1] ?? '';
         if (/\.catch\(\s*\(\)\s*=>/.test(line)) {
-          const marked = /best effort/.test(prev) || /best effort/.test(line);
+          const marked = MARKER.test(prev) || MARKER.test(line);
           const guardsIo = /unlink|writeFile|rm\(|rename|mkdir/.test(line);
           if (!marked || guardsIo) offenders.push(`${name}:${i + 1}: ${line.trim()}`);
         }
@@ -217,7 +219,7 @@ describe('item 1: a failed cleanup is never swallowed', () => {
           const body = [];
           while (j < lines.length && !/^\s*\}/.test(lines[j])) body.push(lines[j++]);
           const code = body.filter((l) => l.trim() && !l.trim().startsWith('//'));
-          if (code.length === 0 && !body.some((l) => /best effort/.test(l))) {
+          if (code.length === 0 && !body.some((l) => MARKER.test(l))) {
             offenders.push(`${name}:${i + 1}: empty catch`);
           }
         }

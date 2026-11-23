@@ -6,11 +6,50 @@
  * not in package.json `exports`).
  */
 
+import dotenv from 'dotenv';
 import fs from 'fs/promises';
+import { readFileSync } from 'fs';
+import { homedir } from 'os';
 import path from 'path';
 import { logger } from './logger.js';
-import { isErrnoException } from './utils.js';
+import { isErrnoException, toError } from './utils.js';
 import type { SpinnerObject } from './types/index.js';
+
+/**
+ * Set process.env.IDEOGRAM_API_KEY from a .env file, for the CLI only.
+ *
+ * Until 2.0 the library loaded the cwd .env and ~/.ideogram/.env into
+ * process.env at import, every variable in them. Now only the CLI reads them,
+ * and only IDEOGRAM_API_KEY is taken (via `dotenv.parse`, which does not touch
+ * process.env). Precedence is unchanged: an IDEOGRAM_API_KEY already in the
+ * environment wins (even an empty one, as before), then the first file that
+ * defines the key: `<cwd>/.env`, then `<home>/.ideogram/.env`. The --api-key
+ * flag outranks all of these (getIdeogramApiKey).
+ *
+ * A missing file is normal and silent; any other read or parse failure is
+ * logged with the path and the next file is tried.
+ *
+ * @returns The file the key was taken from, or undefined if none supplied it
+ */
+export function loadDotenvApiKey(cwd: string = process.cwd(), home: string = homedir()): string | undefined {
+  if (Object.prototype.hasOwnProperty.call(process.env, 'IDEOGRAM_API_KEY')) return undefined;
+  for (const file of [path.join(cwd, '.env'), path.join(home, '.ideogram', '.env')]) {
+    let parsed: Record<string, string>;
+    try {
+      parsed = dotenv.parse(readFileSync(file));
+    } catch (error) {
+      if (!(isErrnoException(error) && error.code === 'ENOENT')) {
+        logger.warn(`Could not read ${file}: ${toError(error).message}`);
+      }
+      continue;
+    }
+    if (Object.prototype.hasOwnProperty.call(parsed, 'IDEOGRAM_API_KEY')) {
+      process.env.IDEOGRAM_API_KEY = parsed.IDEOGRAM_API_KEY;
+      return file;
+    }
+  }
+  return undefined;
+}
 
 /**
  * Create an empty file at `filePath` that nothing else owns, and return its

@@ -3,11 +3,16 @@
  *
  * Handles authentication and API configuration settings.
  *
- * API key can be provided via (in priority order):
+ * The library reads no .env file: pass the key to `new IdeogramAPI(key)`, or
+ * set IDEOGRAM_API_KEY in the environment. Importing this module has no
+ * side effects (until 2.0 it loaded the cwd .env and ~/.ideogram/.env into
+ * process.env at import).
+ *
+ * The CLI resolves its key in this order (see loadDotenvApiKey in cli-io.ts):
  * 1. Command line flag: --api-key
  * 2. Environment variable: IDEOGRAM_API_KEY
- * 3. Local .env file in current directory
- * 4. Global config: ~/.ideogram/.env (for global npm installs)
+ * 3. IDEOGRAM_API_KEY in a .env file in the current directory
+ * 4. IDEOGRAM_API_KEY in ~/.ideogram/.env (for global npm installs)
  *
  * To obtain an API key:
  * 1. Visit https://ideogram.ai/api
@@ -15,10 +20,7 @@
  * 3. Generate a new API key from the API dashboard
  */
 
-import dotenv from 'dotenv';
-import { existsSync } from 'fs';
-import { homedir } from 'os';
-import { join } from 'path';
+import { describeValue } from './http.js';
 import type {
   OperationConstraints,
   OperationKey,
@@ -26,16 +28,6 @@ import type {
   V2ColorPalette,
   V2OperationKey,
 } from './types/index.js';
-
-// Load environment variables in priority order:
-// 1. First try local .env in current directory
-dotenv.config();
-
-// 2. Then try global config in home directory (if local .env doesn't exist)
-const globalConfigPath = join(homedir(), '.ideogram', '.env');
-if (existsSync(globalConfigPath)) {
-  dotenv.config({ path: globalConfigPath });
-}
 
 /** Base URL of the Ideogram API. */
 export const BASE_URL = 'https://api.ideogram.ai';
@@ -532,7 +524,9 @@ export function validateV2Params(operation: V2OperationKey, params: V2Validation
   // Every v2 operation takes a prompt except the upscaler.
   if (operation !== 'upscale-auto') {
     if (!params.prompt || typeof params.prompt !== 'string') {
-      throw new Error('Prompt is required and must be a string');
+      throw new Error(
+        `Prompt is required and must be a string: pass the prompt text as a non-empty string (got ${describeValue(params.prompt)})`
+      );
     }
     const promptMax = promptMaxLengthFor(operation);
     if (params.prompt.length > promptMax) {
@@ -675,7 +669,7 @@ export function validateV2Params(operation: V2OperationKey, params: V2Validation
     case 'precise-edit-v46': {
       checkEnum('quality', params.quality, V45_QUALITIES);
       if (params.hasImage === false) {
-        throw new Error('image is required: pass a file path, URL, Buffer or base64 string as `image`');
+        throw new Error('image is required: pass a file path or a Buffer as `image`');
       }
       const refs = params.referenceImageCount ?? 0;
       const maxRefs = params.hasMask
@@ -695,7 +689,7 @@ export function validateV2Params(operation: V2OperationKey, params: V2Validation
     }
     case 'upscale-auto': {
       if (params.hasImage === false) {
-        throw new Error('image is required: pass a file path, URL, Buffer or base64 string as `image`');
+        throw new Error('image is required: pass a file path or a Buffer as `image`');
       }
       checkEnum('upscale factor', params.upscaleFactor, UPSCALE_FACTORS);
       break;
@@ -719,7 +713,7 @@ export function validateV2Params(operation: V2OperationKey, params: V2Validation
       checkEnum('resolution', params.resolution, MINIMAX_H3_RESOLUTIONS);
       checkIntRange('duration', params.duration, M.duration.min, M.duration.max);
       if (operation === 'minimax-h3-image-to-video') {
-        if (params.hasImage === false) throw new Error('image (the first frame) is required');
+        if (params.hasImage === false) throw new Error('image (the first frame) is required: pass a file path or a Buffer as `image`');
         break;
       }
       checkEnum('aspect ratio', params.aspectRatio, MINIMAX_H3_ASPECT_RATIOS);
@@ -742,7 +736,7 @@ export function validateV2Params(operation: V2OperationKey, params: V2Validation
       checkEnum('resolution', params.resolution, SEEDANCE_25_RESOLUTIONS);
       checkIntRange('duration', params.duration, D.min, D.max);
       if (operation === 'seedance-2-5-image-to-video') {
-        if (params.hasImage === false) throw new Error('image (the first frame) is required');
+        if (params.hasImage === false) throw new Error('image (the first frame) is required: pass a file path or a Buffer as `image`');
         break;
       }
       checkEnum('aspect ratio', params.aspectRatio, SEEDANCE_25_ASPECT_RATIOS);
@@ -838,8 +832,8 @@ export function getIdeogramApiKey(cliApiKey: string | null = null): string {
       '',
       '  1. CLI flag:           ideogram --api-key YOUR_KEY generate --prompt "..."',
       '  2. Environment var:    export IDEOGRAM_API_KEY=YOUR_KEY',
-      '  3. Local .env file:    Create .env in current directory with IDEOGRAM_API_KEY=YOUR_KEY',
-      '  4. Global config:      Create ~/.ideogram/.env with IDEOGRAM_API_KEY=YOUR_KEY',
+      '  3. Local .env file:    (CLI only) Create .env in current directory with IDEOGRAM_API_KEY=YOUR_KEY',
+      '  4. Global config:      (CLI only) Create ~/.ideogram/.env with IDEOGRAM_API_KEY=YOUR_KEY',
       '',
       'Get your API key at https://ideogram.ai/api',
     ].join('\n');
@@ -890,7 +884,9 @@ export function validateOperationParams(operation: string, params: ValidationPar
   // Validate prompt (if applicable)
   if (constraints.prompt?.required) {
     if (!params.prompt || typeof params.prompt !== 'string') {
-      throw new Error('Prompt is required and must be a string');
+      throw new Error(
+        `Prompt is required and must be a string: pass the prompt text as a non-empty string (got ${describeValue(params.prompt)})`
+      );
     }
     if (params.prompt.length > constraints.prompt.maxLength) {
       throw new Error(`Prompt exceeds maximum length of ${constraints.prompt.maxLength} characters`);

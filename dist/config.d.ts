@@ -3,11 +3,16 @@
  *
  * Handles authentication and API configuration settings.
  *
- * API key can be provided via (in priority order):
+ * The library reads no .env file: pass the key to `new IdeogramAPI(key)`, or
+ * set IDEOGRAM_API_KEY in the environment. Importing this module has no
+ * side effects (until 2.0 it loaded the cwd .env and ~/.ideogram/.env into
+ * process.env at import).
+ *
+ * The CLI resolves its key in this order (see loadDotenvApiKey in cli-io.ts):
  * 1. Command line flag: --api-key
  * 2. Environment variable: IDEOGRAM_API_KEY
- * 3. Local .env file in current directory
- * 4. Global config: ~/.ideogram/.env (for global npm installs)
+ * 3. IDEOGRAM_API_KEY in a .env file in the current directory
+ * 4. IDEOGRAM_API_KEY in ~/.ideogram/.env (for global npm installs)
  *
  * To obtain an API key:
  * 1. Visit https://ideogram.ai/api

@@ -485,7 +485,10 @@ export interface GenerateV45Params extends V2CommonParams, V2DeliveryParams {
     magicPrompt?: MagicPromptMode;
     /** Source images to edit (max 5, 25MB each). The first is edited; others are references. */
     images?: ImageInput[];
-    /** Mask for the first source image: black = edit, white = keep. Same size as images[0]. */
+    /**
+     * Mask for the first source image: black = edit, white = keep. That is the intent; the API does not
+     * reliably confine edits to the masked area. Same size as images[0].
+     */
     mask?: ImageInput;
     /**
      * 4.5: 'auto', 'source' (needs images) or an exact 'WIDTHxHEIGHT'.
@@ -531,7 +534,10 @@ export interface PreciseEditV45Params extends V2CommonParams, V2DeliveryParams {
     image: ImageInput;
     /** Guide images, never edited (max 4; max 3 with a mask). */
     referenceImages?: ImageInput[];
-    /** Mask: black = edit, white = keep. Same size as image. */
+    /**
+     * Mask: black = edit, white = keep. That is the intent; the API does not reliably confine edits
+     * to the masked area. Same size as image.
+     */
     mask?: ImageInput;
     /**
      * 'auto' (the default: a region around the mask; without a mask it edits the

@@ -6,11 +6,11 @@
  */
 import fs from 'fs/promises';
 import { logger } from './logger.js';
-import { fetchFollowingRedirects, readBodyWithLimit, streamToFile } from './http.js';
+import { assertMaxBytes, assertTimerMs, fetchFollowingRedirects, readBodyWithLimit, streamToFile } from './http.js';
 import { imageSize } from 'image-size';
 import { imageSizeFromFile } from 'image-size/fromFile';
 import { lookup } from 'dns/promises';
-import { isIPv4, isIPv6 } from 'net';
+import { BlockList, isIPv4, isIPv6 } from 'net';
 /** Coerce a caught value to an Error (a non-Error keeps its `message`, else its string form). */
 export function toError(e) {
     if (e instanceof Error)
@@ -25,74 +25,97 @@ export function isErrnoException(e) {
     return typeof e === 'object' && e !== null && typeof e.code === 'string';
 }
 /**
- * Helper function to check if an IP address is blocked (private/internal).
+ * Address ranges a download must never reach: loopback, unspecified, private,
+ * link-local (cloud metadata), CGNAT, IETF/benchmarking, multicast, reserved
+ * (240/4, which includes the broadcast address). IPv4-mapped IPv6 is unwrapped
+ * to IPv4 before this list is consulted (see unwrapMappedIPv4).
+ */
+const BLOCKED_ADDRESSES = new BlockList();
+for (const [network, prefix] of [
+    ['0.0.0.0', 8], // "this network", includes 0.0.0.0
+    ['10.0.0.0', 8], // private
+    ['100.64.0.0', 10], // CGNAT
+    ['127.0.0.0', 8], // loopback
+    ['169.254.0.0', 16], // link-local, AWS/GCP/Azure metadata
+    ['172.16.0.0', 12], // private
+    ['192.0.0.0', 24], // IETF protocol assignments
+    ['192.168.0.0', 16], // private
+    ['198.18.0.0', 15], // benchmarking
+    ['224.0.0.0', 4], // multicast
+    ['240.0.0.0', 4], // reserved, includes 255.255.255.255
+]) {
+    BLOCKED_ADDRESSES.addSubnet(network, prefix, 'ipv4');
+}
+for (const [network, prefix] of [
+    ['::', 96], // unspecified (::), loopback (::1) and the deprecated IPv4-compatible range
+    ['fc00::', 7], // unique local
+    ['fe80::', 10], // link-local
+    ['ff00::', 8], // multicast
+]) {
+    BLOCKED_ADDRESSES.addSubnet(network, prefix, 'ipv6');
+}
+/**
+ * If `ip` is an IPv4-mapped IPv6 address (::ffff:a.b.c.d), in any spelling
+ * (dotted, hex, uncompressed), return the IPv4 address; otherwise return `ip`
+ * unchanged (lower-cased, brackets and a zone id removed). The WHATWG URL
+ * parser is the normalizer: it turns every spelling into the compressed hex
+ * form, so one pattern covers them all.
+ */
+function unwrapMappedIPv4(ip) {
+    const bare = ip.replace(/^\[|\]$/g, '').split('%')[0].toLowerCase();
+    if (!isIPv6(bare))
+        return bare;
+    let normalized = bare;
+    try {
+        normalized = new URL(`http://[${bare}]/`).hostname.replace(/^\[|\]$/g, '');
+    }
+    catch {
+        // AUDIT-OK(no_empty_catch): isIPv6 accepted the text, so this cannot fail; if it ever did, the un-normalized text is still checked below
+    }
+    const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(normalized);
+    if (!mapped)
+        return normalized;
+    const high = parseInt(mapped[1], 16);
+    const low = parseInt(mapped[2], 16);
+    return `${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`;
+}
+/**
+ * Check whether an IP address (IPv4 or IPv6, brackets allowed) is in a blocked
+ * range. An unparseable address is blocked: it cannot be shown to be public.
  *
- * @param ip - IP address to check (IPv4 or IPv6)
- * @returns True if IP is blocked, false otherwise
+ * @param ip - IP address to check
+ * @returns True if the address is blocked, false if it is a routable public address
  */
 function isBlockedIP(ip) {
-    // Remove IPv6 bracket notation
-    const cleanIP = ip.replace(/^\[|\]$/g, '');
-    // Block localhost variations
-    if (cleanIP === 'localhost' || cleanIP === '127.0.0.1' || cleanIP === '::1') {
-        return true;
-    }
-    // Block cloud metadata endpoints
-    const blockedHosts = ['metadata.google.internal', 'metadata', '169.254.169.254'];
-    if (blockedHosts.includes(cleanIP)) {
-        return true;
-    }
-    // Block private IP ranges and special addresses
-    const blockedPatterns = [
-        /^127\./, // Loopback
-        /^10\./, // Private Class A
-        /^172\.(1[6-9]|2[0-9]|3[0-1])\./, // Private Class B
-        /^192\.168\./, // Private Class C
-        /^169\.254\./, // Link-local (AWS metadata)
-        /^0\./, // Invalid range
-        /^::1$/, // IPv6 loopback
-        /^fe80:/, // IPv6 link-local
-        /^fc00:/, // IPv6 unique local
-        /^fd00:/, // IPv6 unique local
-    ];
-    return blockedPatterns.some((pattern) => pattern.test(cleanIP));
+    const address = unwrapMappedIPv4(ip);
+    if (isIPv4(address))
+        return BLOCKED_ADDRESSES.check(address, 'ipv4');
+    if (isIPv6(address))
+        return BLOCKED_ADDRESSES.check(address, 'ipv6');
+    return true;
+}
+/** True when `ip` is IPv4 loopback (127/8), after unwrapping an IPv4-mapped IPv6 spelling. */
+function isLoopbackIPv4(ip) {
+    const address = unwrapMappedIPv4(ip);
+    return isIPv4(address) && address.startsWith('127.');
 }
 /**
  * Validate image URL for security.
  * Enforces HTTPS and blocks private IPs, localhost, and cloud metadata endpoints.
  *
- * DNS Resolution: This function performs DNS resolution to prevent DNS rebinding attacks,
- * where a domain might resolve to different IPs between validation time and request time.
+ * The address check parses the URL (WHATWG), so every spelling of an address
+ * (hex or dotted IPv4-mapped IPv6, 0x7f.1, 2130706433) reaches it in one form.
+ * A host name is resolved and EVERY address it returns must be public.
+ *
+ * Limit: this validates the addresses the name resolves to now. It does not pin
+ * the later fetch to them, so a host that answers differently between this
+ * check and the fetch (DNS rebinding) is not prevented.
  *
  * @param url - URL to validate
  * @returns The validated URL
  * @throws Error if URL is invalid or insecure
  */
 export async function validateImageUrl(url) {
-    // First check for IPv4-mapped IPv6 in the original URL string (before URL parsing normalizes it)
-    // This prevents SSRF bypass via https://[::ffff:127.0.0.1] or https://[::ffff:169.254.169.254]
-    const ipv6MappedMatch = url.match(/\[::ffff:(\d+\.\d+\.\d+\.\d+)\]/i);
-    if (ipv6MappedMatch) {
-        const extractedIPv4 = ipv6MappedMatch[1];
-        logger.warn(`SECURITY: Detected IPv4-mapped IPv6 address in URL: ${url} → ${extractedIPv4}`);
-        // Validate the extracted IPv4 directly
-        if (extractedIPv4 === '127.0.0.1' || extractedIPv4.startsWith('127.')) {
-            logger.warn(`SECURITY: Blocked IPv4-mapped IPv6 localhost: ${url}`);
-            throw new Error('Access to localhost is not allowed');
-        }
-        // Check against private IP patterns
-        const privatePatterns = [
-            /^10\./, // Private Class A
-            /^172\.(1[6-9]|2[0-9]|3[0-1])\./, // Private Class B
-            /^192\.168\./, // Private Class C
-            /^169\.254\./, // Link-local (AWS metadata)
-            /^0\./, // Invalid range
-        ];
-        if (privatePatterns.some((pattern) => pattern.test(extractedIPv4))) {
-            logger.warn(`SECURITY: Blocked IPv4-mapped IPv6 private IP: ${url}`);
-            throw new Error('Access to internal/private IP addresses is not allowed');
-        }
-    }
     let parsed;
     try {
         parsed = new URL(url);
@@ -105,48 +128,52 @@ export async function validateImageUrl(url) {
         throw new Error('Only HTTPS URLs are allowed for security reasons');
     }
     const hostname = parsed.hostname.toLowerCase();
-    const cleanHostname = hostname.replace(/^\[|\]$/g, ''); // Remove IPv6 brackets
+    const cleanHostname = hostname.replace(/^\[|\]$/g, '').replace(/\.$/, ''); // no IPv6 brackets, no trailing dot
     // First check if hostname itself is blocked (before DNS resolution)
     const blockedHosts = ['localhost', 'metadata.google.internal', 'metadata'];
     if (blockedHosts.includes(cleanHostname)) {
         logger.warn(`SECURITY: Blocked access to prohibited hostname: ${hostname}`);
-        throw new Error('Access to cloud metadata endpoints is not allowed');
+        throw new Error(`Access to cloud metadata endpoints is not allowed (host ${hostname}). Use a public HTTPS URL.`);
     }
     // Check if hostname is already an IP address (not a domain name)
     if (isIPv4(cleanHostname) || isIPv6(cleanHostname)) {
         if (isBlockedIP(cleanHostname)) {
+            if (isIPv6(cleanHostname) && isLoopbackIPv4(cleanHostname)) {
+                logger.warn(`SECURITY: Blocked IPv4-mapped IPv6 localhost: ${hostname}`);
+                throw new Error(`Access to localhost is not allowed (host ${hostname}). Use a public HTTPS URL.`);
+            }
             logger.warn(`SECURITY: Blocked access to private/internal IP: ${hostname}`);
-            throw new Error('Access to internal/private IP addresses is not allowed');
+            throw new Error(`Access to internal/private IP addresses is not allowed (host ${hostname}). Use a public HTTPS URL.`);
         }
+        return url;
     }
-    else {
-        // Hostname is a domain name - perform DNS resolution to prevent DNS rebinding
-        try {
-            logger.debug(`Resolving DNS for hostname: ${hostname}`);
-            const { address } = await lookup(hostname);
-            logger.debug(`DNS resolved ${hostname} → ${address}`);
-            if (isBlockedIP(address)) {
-                logger.warn(`SECURITY: DNS resolution of ${hostname} points to blocked IP: ${address}`);
-                throw new Error(`Domain ${hostname} resolves to internal/private IP address`);
-            }
-            logger.debug(`DNS validation passed for ${hostname} (resolved to ${address})`);
-        }
-        catch (error) {
-            const err = toError(error);
-            if (isErrnoException(error) && error.code === 'ENOTFOUND') {
-                logger.warn(`SECURITY: Domain ${hostname} could not be resolved`);
-                throw new Error(`Domain ${hostname} could not be resolved`, { cause: error });
-            }
-            else if (err.message && err.message.includes('resolves to internal')) {
-                // Re-throw our custom error about blocked IPs
-                throw error;
-            }
-            else {
-                logger.warn(`SECURITY: DNS lookup failed for ${hostname}: ${err.message}`);
-                throw new Error(`Failed to validate domain ${hostname}: ${err.message}`, { cause: error });
-            }
-        }
+    // Hostname is a domain name: resolve it and require every answer to be public.
+    let addresses;
+    try {
+        logger.debug(`Resolving DNS for hostname: ${hostname}`);
+        const answers = await lookup(hostname, { all: true });
+        // `all: true` yields an array; a single { address } is accepted too (older test doubles).
+        addresses = (Array.isArray(answers) ? answers : [answers]).map((a) => a.address);
     }
+    catch (error) {
+        const err = toError(error);
+        if (isErrnoException(error) && error.code === 'ENOTFOUND') {
+            logger.warn(`SECURITY: Domain ${hostname} could not be resolved`);
+            throw new Error(`Domain ${hostname} could not be resolved`, { cause: error });
+        }
+        logger.warn(`SECURITY: DNS lookup failed for ${hostname}: ${err.message}`);
+        throw new Error(`Failed to validate domain ${hostname}: ${err.message}`, { cause: error });
+    }
+    if (addresses.length === 0) {
+        throw new Error(`Failed to validate domain ${hostname}: DNS returned no addresses`);
+    }
+    logger.debug(`DNS resolved ${hostname} → ${addresses.join(', ')}`);
+    const blocked = addresses.find((address) => isBlockedIP(address));
+    if (blocked !== undefined) {
+        logger.warn(`SECURITY: DNS resolution of ${hostname} points to blocked IP: ${blocked}`);
+        throw new Error(`Domain ${hostname} resolves to internal/private IP address (${blocked}). Use a URL whose host resolves only to public addresses.`);
+    }
+    logger.debug(`DNS validation passed for ${hostname}`);
     return url;
 }
 /**
@@ -257,7 +284,7 @@ export async function loadImageAsBuffer(imagePath) {
     const buffer = await fs.readFile(imagePath);
     // Validate file size (50MB max as per security requirements)
     if (buffer.length > 50 * 1024 * 1024) {
-        throw new Error('Image file size exceeds maximum of 50MB');
+        throw new Error(`Image file size exceeds maximum of 50MB (${(buffer.length / 1024 / 1024).toFixed(1)}MB: ${imagePath}). Resize or compress the image.`);
     }
     return buffer;
 }
@@ -283,7 +310,7 @@ export async function downloadImageAsBuffer(imageUrl) {
     const allowedMimeTypes = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
     const contentType = response.headers.get('content-type')?.split(';')[0].trim();
     if (!contentType || !allowedMimeTypes.includes(contentType)) {
-        // best effort: the Content-Type error is already decided; a failed cancel adds nothing
+        // AUDIT-OK(no_empty_catch): the Content-Type error is already decided; a failed cancel adds nothing
         await response.body?.cancel().catch(() => undefined);
         throw new Error(`Invalid Content-Type: ${contentType}. Expected image/* (png, jpeg, webp, gif)`);
     }
@@ -297,17 +324,20 @@ export async function downloadImageAsBuffer(imageUrl) {
  * @param url - HTTPS URL of the result
  * @param options - `maxBytes` (default 200MB, for 8k transparent PNGs) and `timeoutMs` (default 60s)
  * @returns The response body
- * @throws Error if the URL fails validation, the download fails, or the body exceeds `maxBytes`
+ * @throws Error if `maxBytes` is not an integer >= 1 or `timeoutMs` is not an integer from 1 to 2147483647
+ *   (before any request is sent), if the URL fails validation, the download fails, or the body exceeds `maxBytes`
  *
  * @example
  * const bytes = await downloadBuffer('https://ideogram.ai/api/images/ephemeral/x.png', { timeoutMs: 30000 });
  */
 export async function downloadBuffer(url, options = {}) {
-    const response = await fetchFollowingRedirects(url, {
-        validate: validateImageUrl,
-        timeoutMs: options.timeoutMs ?? 60000,
-    });
-    return readBodyWithLimit(response, options.maxBytes ?? 200 * 1024 * 1024);
+    const timeoutMs = options.timeoutMs ?? 60000;
+    const maxBytes = options.maxBytes ?? 200 * 1024 * 1024;
+    // Both are checked before any request is sent.
+    assertTimerMs('timeoutMs', timeoutMs);
+    assertMaxBytes('maxBytes', maxBytes);
+    const response = await fetchFollowingRedirects(url, { validate: validateImageUrl, timeoutMs });
+    return readBodyWithLimit(response, maxBytes);
 }
 /**
  * Stream a generated result (a video, an SVG) to a file without holding it in
@@ -317,18 +347,21 @@ export async function downloadBuffer(url, options = {}) {
  * @param outputPath - File to write (parent directories are created)
  * @param options - `maxBytes` (default 2GB) and `timeoutMs` (default 5 minutes)
  * @returns Resolves once the file is fully written
- * @throws Error if the download fails or exceeds `maxBytes`; any partial file is
+ * @throws Error if `maxBytes` or `timeoutMs` is out of range (before any request is sent), if the
+ *   download fails or exceeds `maxBytes`; any partial file is
  *   removed (best effort) before the original error is rethrown
  *
  * @example
  * await downloadToFile('https://ideogram.ai/api/videos/x.mp4', 'out/x.mp4', { timeoutMs: 600000 });
  */
 export async function downloadToFile(url, outputPath, options = {}) {
-    const response = await fetchFollowingRedirects(url, {
-        validate: validateImageUrl,
-        timeoutMs: options.timeoutMs ?? 300000,
-    });
-    await streamToFile(response, outputPath, options.maxBytes ?? 2 * 1024 * 1024 * 1024);
+    const timeoutMs = options.timeoutMs ?? 300000;
+    const maxBytes = options.maxBytes ?? 2 * 1024 * 1024 * 1024;
+    // Both are checked before any request is sent.
+    assertTimerMs('timeoutMs', timeoutMs);
+    assertMaxBytes('maxBytes', maxBytes);
+    const response = await fetchFollowingRedirects(url, { validate: validateImageUrl, timeoutMs });
+    await streamToFile(response, outputPath, maxBytes);
 }
 /**
  * Detect an image's format from its magic bytes.

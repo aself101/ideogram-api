@@ -13,8 +13,13 @@ export declare function isErrnoException(e: unknown): e is NodeJS.ErrnoException
  * Validate image URL for security.
  * Enforces HTTPS and blocks private IPs, localhost, and cloud metadata endpoints.
  *
- * DNS Resolution: This function performs DNS resolution to prevent DNS rebinding attacks,
- * where a domain might resolve to different IPs between validation time and request time.
+ * The address check parses the URL (WHATWG), so every spelling of an address
+ * (hex or dotted IPv4-mapped IPv6, 0x7f.1, 2130706433) reaches it in one form.
+ * A host name is resolved and EVERY address it returns must be public.
+ *
+ * Limit: this validates the addresses the name resolves to now. It does not pin
+ * the later fetch to them, so a host that answers differently between this
+ * check and the fetch (DNS rebinding) is not prevented.
  *
  * @param url - URL to validate
  * @returns The validated URL
@@ -84,7 +89,8 @@ export declare function downloadImageAsBuffer(imageUrl: string): Promise<Buffer>
  * @param url - HTTPS URL of the result
  * @param options - `maxBytes` (default 200MB, for 8k transparent PNGs) and `timeoutMs` (default 60s)
  * @returns The response body
- * @throws Error if the URL fails validation, the download fails, or the body exceeds `maxBytes`
+ * @throws Error if `maxBytes` is not an integer >= 1 or `timeoutMs` is not an integer from 1 to 2147483647
+ *   (before any request is sent), if the URL fails validation, the download fails, or the body exceeds `maxBytes`
  *
  * @example
  * const bytes = await downloadBuffer('https://ideogram.ai/api/images/ephemeral/x.png', { timeoutMs: 30000 });
@@ -101,7 +107,8 @@ export declare function downloadBuffer(url: string, options?: {
  * @param outputPath - File to write (parent directories are created)
  * @param options - `maxBytes` (default 2GB) and `timeoutMs` (default 5 minutes)
  * @returns Resolves once the file is fully written
- * @throws Error if the download fails or exceeds `maxBytes`; any partial file is
+ * @throws Error if `maxBytes` or `timeoutMs` is out of range (before any request is sent), if the
+ *   download fails or exceeds `maxBytes`; any partial file is
  *   removed (best effort) before the original error is rethrown
  *
  * @example

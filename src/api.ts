@@ -25,7 +25,14 @@
  */
 
 import winston from 'winston';
-import { formDataSize, readBodyWithLimit, describeNetworkError, assertTimerMs, ResponseTooLargeError } from './http.js';
+import {
+  formDataSize,
+  readBodyWithLimit,
+  describeNetworkError,
+  describeValue,
+  assertTimerMs,
+  ResponseTooLargeError,
+} from './http.js';
 import { BASE_URL, ENDPOINTS, redactApiKey } from './config.js';
 import { buildFormData, loadImageAsBuffer, loadAudioAsBuffer, assertSquareImage } from './utils.js';
 import type {
@@ -127,6 +134,17 @@ export class IdeogramAPIError extends Error {
    * for a timeout). The request may still have run server-side.
    */
   readonly code?: string;
+  /**
+   * True when the request was sent and its outcome is unknown or server-side
+   * failed: no response, a response body that could not be read or parsed, an
+   * over-size body, or a 5xx. The generation may have run and been billed, so
+   * check usage (or the generation id) before retrying. False for 4xx
+   * validation, auth and rate-limit answers, for anything thrown before the
+   * request was sent, and for failed status polls (a GET is never billed).
+   */
+  readonly possiblyBilled: boolean;
+  /** Polling: the generation being waited on, so a failed wait can be resumed. */
+  readonly generationId?: string;
 
   constructor(
     message: string,
@@ -137,11 +155,15 @@ export class IdeogramAPIError extends Error {
       failureReason?: string;
       body?: unknown;
       code?: string;
+      possiblyBilled?: boolean;
+      generationId?: string;
       cause?: unknown;
     } = {}
   ) {
     super(message, details.cause !== undefined ? { cause: details.cause } : undefined);
     this.code = details.code;
+    this.possiblyBilled = details.possiblyBilled ?? false;
+    this.generationId = details.generationId;
     this.name = 'IdeogramAPIError';
     this.status = details.status;
     this.rejectReason = details.rejectReason;
@@ -305,6 +327,8 @@ export class IdeogramAPI {
       );
     }
 
+    // A failed status poll (GET) costs nothing; anything else that was sent may have been billed.
+    const billable = opts.method !== 'GET';
     let response: Response;
     try {
       response = await fetch(url, {
@@ -326,12 +350,18 @@ export class IdeogramAPI {
           'a generation may still have run and been billed. Check before retrying.'
       );
       if (process.env.NODE_ENV === 'production') {
-        throw new IdeogramAPIError('Request failed. Please check your connection and try again.', {
-          code,
-          cause: error,
-        });
+        throw new IdeogramAPIError(
+          billable
+            ? 'Request failed. The request may have run and been billed. Check your usage before retrying.'
+            : 'Request failed. Please check your connection and try again.',
+          { code, possiblyBilled: billable, cause: error }
+        );
       }
-      throw new IdeogramAPIError(`Request failed${code ? ` (${code})` : ''}: ${message}`, { code, cause: error });
+      throw new IdeogramAPIError(`Request failed${code ? ` (${code})` : ''}: ${message}`, {
+        code,
+        possiblyBilled: billable,
+        cause: error,
+      });
     }
 
     let raw: Buffer;
@@ -347,6 +377,7 @@ export class IdeogramAPI {
         throw new IdeogramAPIError(`${error.message} (HTTP ${response.status})`, {
           status: response.status,
           code: 'ERESPONSETOOLARGE',
+          possiblyBilled: billable,
           cause: error,
         });
       }
@@ -359,7 +390,7 @@ export class IdeogramAPI {
       );
       throw new IdeogramAPIError(
         `Request failed while reading the response (HTTP ${response.status})${code ? ` (${code})` : ''}: ${message}`,
-        { status: response.status, code, cause: error }
+        { status: response.status, code, possiblyBilled: billable, cause: error }
       );
     }
     const contentType = response.headers.get('content-type') ?? '';
@@ -381,6 +412,8 @@ export class IdeogramAPI {
         rejectReason,
         maxInflightRequests: data?.max_inflight_requests,
         body: data ?? raw.toString('utf8'),
+        // A 5xx may be a failure after the work started; a 4xx answer was decided before any work.
+        possiblyBilled: billable && status >= 500,
       };
 
       this.logger.error(`API request failed (${status}): ${message}`);
@@ -411,7 +444,12 @@ export class IdeogramAPI {
 
       // Sanitize error in production
       if (process.env.NODE_ENV === 'production') {
-        throw new IdeogramAPIError(`Operation failed (HTTP ${status}). Please try again.`, details);
+        throw new IdeogramAPIError(
+          details.possiblyBilled
+            ? `Operation failed (HTTP ${status}). The request may have run and been billed. Check your usage before retrying.`
+            : `Operation failed (HTTP ${status}). Please try again.`,
+          details
+        );
       }
 
       throw new IdeogramAPIError(`API error (${status}): ${message}`, details);
@@ -425,7 +463,7 @@ export class IdeogramAPI {
       );
       throw new IdeogramAPIError(
         `Invalid response format from API (HTTP ${response.status}, Content-Type: ${contentType || '(none)'})`,
-        { status: response.status, body: raw.toString('utf8', 0, BODY_EXCERPT_BYTES) }
+        { status: response.status, body: raw.toString('utf8', 0, BODY_EXCERPT_BYTES), possiblyBilled: billable }
       );
     }
 
@@ -439,6 +477,7 @@ export class IdeogramAPI {
       throw new IdeogramAPIError(`Invalid response format from API: body is not valid JSON (HTTP ${response.status})`, {
         status: response.status,
         body: raw.toString('utf8', 0, BODY_EXCERPT_BYTES),
+        possiblyBilled: billable,
         cause: error,
       });
     }
@@ -449,7 +488,7 @@ export class IdeogramAPI {
       );
       throw new IdeogramAPIError(
         `Invalid response format from API: expected a JSON object, got ${got} (HTTP ${response.status})`,
-        { status: response.status, body: parsed }
+        { status: response.status, body: parsed, possiblyBilled: billable }
       );
     }
     // Field-level shapes are trusted, not validated: the API's documented
@@ -753,7 +792,7 @@ export class IdeogramAPI {
     }
     if (params.image === undefined || params.image === null) {
       throw new Error(
-        'image is required: pass a file path, URL, Buffer or base64 string as `image`'
+        `image is required: pass a file path or a Buffer as \`image\` (got ${describeValue(params.image)})`
       );
     }
     this.logger.info(`Upscaling image ${params.upscaleFactor ?? 'x2'}`);
@@ -972,7 +1011,8 @@ export class IdeogramAPI {
   /**
    * Generate with Ideogram 4.5, or edit source images with a prompt (multipart).
    * With `images`, the first image is edited and the rest are references;
-   * `mask` limits the edit to part of the first image.
+   * `mask` marks the area to edit (black = edit, white = keep); the API does not reliably
+   * confine the edit to that area, so check the result.
    *
    * @example
    * const res = await api.generateV45({ prompt: 'A poster that says OPEN LATE', quality: 'high' });
@@ -1051,7 +1091,7 @@ export class IdeogramAPI {
   ): Promise<V2GenerationResponse | PriceQuote> {
     if (params.image === undefined || params.image === null) {
       throw new Error(
-        'image is required: pass a file path, URL, Buffer or base64 string as `image`'
+        `image is required: pass a file path or a Buffer as \`image\` (got ${describeValue(params.image)})`
       );
     }
     this.logger.info(`Precise editing image with ${label}`);
@@ -1222,7 +1262,9 @@ export class IdeogramAPI {
   async minimaxH3ImageToVideo(params: MinimaxH3ImageToVideoParams): Promise<V2Acknowledgement | PriceQuote>;
   async minimaxH3ImageToVideo(params: MinimaxH3ImageToVideoParams): Promise<V2Acknowledgement | PriceQuote> {
     if (params.image === undefined || params.image === null) {
-      throw new Error('image (the first frame) is required');
+      throw new Error(
+        `image (the first frame) is required: pass a file path or a Buffer as \`image\` (got ${describeValue(params.image)})`
+      );
     }
     this.logger.info('Image to video with MiniMax H3');
     const formData = buildFormData({
@@ -1316,7 +1358,9 @@ export class IdeogramAPI {
   async seedance25ImageToVideo(params: Seedance25ImageToVideoParams): Promise<V2Acknowledgement | PriceQuote>;
   async seedance25ImageToVideo(params: Seedance25ImageToVideoParams): Promise<V2Acknowledgement | PriceQuote> {
     if (params.image === undefined || params.image === null) {
-      throw new Error('image (the first frame) is required');
+      throw new Error(
+        `image (the first frame) is required: pass a file path or a Buffer as \`image\` (got ${describeValue(params.image)})`
+      );
     }
     this.logger.info('Image to video with Seedance 2.5');
     const formData = buildFormData({
@@ -1375,19 +1419,24 @@ export class IdeogramAPI {
    * Get the status (and, when complete, the results) of an async generation.
    *
    * @param generationId - The generation_id returned by a v2 request
+   * @param options - `timeoutMs`: request timeout (default 120000)
    *
    * @example
    * const status = await api.getGeneration(res.generation_id);
    * if (status.status === 'completed') console.log(status.data);
    */
-  async getGeneration(generationId: string): Promise<GenerationStatus> {
-    if (!generationId) {
-      throw new Error('generationId is required');
+  async getGeneration(generationId: string, options: { timeoutMs?: number } = {}): Promise<GenerationStatus> {
+    if (!generationId || typeof generationId !== 'string') {
+      throw new Error(
+        `generationId is required: pass the generation_id string from a v2 response (got ${describeValue(generationId)})`
+      );
     }
+    const timeoutMs = options.timeoutMs ?? V1_TIMEOUT_MS;
+    assertTimerMs('timeoutMs', timeoutMs);
     return this._request<GenerationStatus>({
       method: 'GET',
       endpoint: `${ENDPOINTS.GENERATIONS}/${encodeURIComponent(generationId)}`,
-      timeoutMs: V1_TIMEOUT_MS,
+      timeoutMs,
       maxBodyBytes: BODY_LIMITS.json,
     });
   }
@@ -1422,7 +1471,9 @@ export class IdeogramAPI {
     for (;;) {
       let status: GenerationStatus | undefined;
       try {
-        status = await this.getGeneration(generationId);
+        // Never let one poll outlive the overall deadline.
+        const pollTimeout = Math.max(1, Math.min(V1_TIMEOUT_MS, deadline - Date.now()));
+        status = await this.getGeneration(generationId, { timeoutMs: pollTimeout });
         interval = baseInterval;
       } catch (error) {
         if (error instanceof IdeogramAPIError && error.status === 429) {
@@ -1430,6 +1481,22 @@ export class IdeogramAPI {
           // current interval: a base interval above 30s must not be shortened.
           interval = Math.max(interval, Math.min(Math.max(interval * 2, 1000), 30000));
           this.logger.warn(`Rate limited while polling ${generationId}; retrying in ${interval}ms`);
+        } else if (error instanceof IdeogramAPIError) {
+          // Name the generation: it keeps running server-side and can be resumed.
+          throw new IdeogramAPIError(
+            `${error.message} (while polling generation ${generationId}; it may still complete, poll getGeneration later)`,
+            {
+              status: error.status,
+              rejectReason: error.rejectReason,
+              maxInflightRequests: error.maxInflightRequests,
+              failureReason: error.failureReason,
+              body: error.body,
+              code: error.code,
+              possiblyBilled: error.possiblyBilled,
+              generationId,
+              cause: error,
+            }
+          );
         } else {
           throw error;
         }
@@ -1443,14 +1510,15 @@ export class IdeogramAPI {
         if (status.status === 'failed') {
           throw new IdeogramAPIError(
             `Generation ${generationId} failed${status.failure_reason ? `: ${status.failure_reason}` : ''}`,
-            { failureReason: status.failure_reason, body: status }
+            { failureReason: status.failure_reason, body: status, generationId }
           );
         }
       }
 
       if (Date.now() + interval > deadline) {
         throw new IdeogramAPIError(
-          `Timed out after ${timeoutMs}ms waiting for generation ${generationId} (it may still complete; poll getGeneration later)`
+          `Timed out after ${timeoutMs}ms waiting for generation ${generationId} (it may still complete; poll getGeneration later)`,
+          { generationId }
         );
       }
       await new Promise((resolve) => setTimeout(resolve, interval));

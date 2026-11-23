@@ -1,7 +1,7 @@
 {
   "name": "ideogram-api",
   "version": "1.1.0",
-  "description": "Node.js wrapper for Ideogram API - Image generation, editing, remixing, and manipulation",
+  "description": "Node.js library and CLI for the Ideogram API: image generation and editing (Ideogram 3.0, 4.x and auto), SVG, upscaling and video (MiniMax H3, Seedance 2.5)",
   "type": "module",
   "main": "dist/api.js",
   "types": "dist/api.d.ts",
@@ -65,7 +65,15 @@
     "upscale",
     "remix",
     "reframe",
-    "typescript"
+    "typescript",
+    "svg",
+    "vector",
+    "video",
+    "text-to-video",
+    "image-to-video",
+    "minimax",
+    "seedance",
+    "cli"
   ],
   "author": "img-gen Contributors",
   "license": "MIT",
@@ -87,18 +95,18 @@
     "winston": "^3.11.0"
   },
   "devDependencies": {
-    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/changelog": "^7.0.0",
     "@semantic-release/commit-analyzer": "^13.0.1",
-    "@semantic-release/git": "^10.0.1",
-    "@semantic-release/github": "^11.0.6",
-    "@semantic-release/npm": "^12.0.2",
-    "@semantic-release/release-notes-generator": "^14.1.0",
+    "@semantic-release/git": "^11.0.1",
+    "@semantic-release/github": "^12.0.11",
+    "@semantic-release/npm": "^13.2.0",
+    "@semantic-release/release-notes-generator": "^14.1.1",
     "@types/node": "^24.10.1",
-    "@vitest/coverage-v8": "^4.0.10",
-    "@vitest/ui": "^4.0.10",
-    "semantic-release": "^24.2.9",
+    "@vitest/coverage-v8": "^5.1.1",
+    "@vitest/ui": "^5.1.1",
+    "semantic-release": "^25.0.9",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.10"
+    "vitest": "^5.1.1"
   }
 }

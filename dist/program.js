@@ -37,7 +37,7 @@ import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { IdeogramAPI, extractImages, extractDescriptions, } from './api.js';
 import { getIdeogramApiKey, validateOperationParams, DEFAULT_OUTPUT_DIR, ASPECT_RATIOS, RESOLUTIONS, RENDERING_SPEEDS, STYLE_PRESETS, V4_RESOLUTIONS, V4_ASPECT_RATIOS, V4_RENDERING_SPEEDS, V4_OUTPUT_RESOLUTIONS, V45_QUALITIES, V45_BACKGROUNDS, V46_SIZES, AUTO_RESOLUTION_TIERS, AUTO_STYLE_TYPES, V2_COLOR_PALETTE_PRESETS, SVG_QUALITIES, UPSCALE_FACTORS, ASSET_TYPES, MINIMAX_H3_ASPECT_RATIOS, MINIMAX_H3_RESOLUTIONS, MINIMAX_H3_PROMPT_EXPANSION_MODES, SEEDANCE_25_ASPECT_RATIOS, SEEDANCE_25_RESOLUTIONS, } from './config.js';
-import { saveImage, saveMetadata, generateFilename, ensureDirectory, createSpinner, claimPath, } from './cli-io.js';
+import { saveImage, saveMetadata, generateFilename, ensureDirectory, createSpinner, claimPath, loadDotenvApiKey, } from './cli-io.js';
 import { logger } from './logger.js';
 import { discardFile } from './http.js';
 import { setLogLevel, assertSquareImage, toError } from './utils.js';
@@ -509,7 +509,7 @@ export function createProgram() {
             .description(`Generate with Ideogram ${model}, or edit source images with a prompt`)
             .requiredOption('-p, --prompt <text>', 'Prompt, or the edit instruction with --images (required)')
             .option('-i, --images <paths...>', 'Source images (max 5); the first is edited, others are references')
-            .option('-m, --mask <path>', 'Mask for the first image (black = edit, white = keep)')
+            .option('-m, --mask <path>', 'Mask for the first image (black = edit, white = keep; the API may still change pixels outside the mask)')
             .option('--size <size>', `Output size: ${sizes}`)
             .option('--background <bg>', `Background (${V45_BACKGROUNDS.join(', ')})`)
             .option('--quality <q>', `Quality (${V45_QUALITIES.join(', ')})`)).action(async (options) => {
@@ -541,7 +541,7 @@ export function createProgram() {
             .requiredOption('-p, --prompt <text>', 'Edit instruction (required)')
             .requiredOption('-i, --image <path>', 'Image to edit (required)')
             .option('--reference-images <paths...>', 'Guide images (max 4; max 3 with --mask)')
-            .option('-m, --mask <path>', 'Mask (black = edit, white = keep), same size as the image')
+            .option('-m, --mask <path>', 'Mask (black = edit, white = keep; the API may still change pixels outside the mask), same size as the image')
             .option('--context-window <window>', `Region to edit: auto (default; around the mask, else the whole image), none, or y_min,x_min,y_max,x_max. Whole-image edits are bounded by ${bound}`)
             .option('--quality <q>', `Quality (${V45_QUALITIES.join(', ')})`)).action(async (options) => {
             await executeV2(op, options, program.opts());
@@ -756,6 +756,8 @@ export function createProgram() {
  * handing argv to commander.
  */
 export async function main(argv = process.argv) {
+    // The CLI (not the library) reads IDEOGRAM_API_KEY from a .env file; see loadDotenvApiKey.
+    loadDotenvApiKey();
     // Handle examples flag before parsing (to avoid help display)
     if (argv.includes('--examples')) {
         showExamples();
@@ -985,13 +987,19 @@ async function saveResults(response, operation, promptOrName, baseOutputDir, opt
         console.log('⚠ No images returned');
         return;
     }
+    // The images are already billed. Before anything touches the disk, print every
+    // result URL (console.log: --log-level does not silence it), so no disk
+    // failure below can lose them. The v1 response carries no generation id.
+    images.forEach((img, i) => {
+        if (img.url)
+            console.log(`Result URL ${i + 1}/${images.length}: ${img.url}`);
+    });
     const outputDir = path.join(baseOutputDir, operation);
-    await ensureDirectory(outputDir);
     // Write the metadata first, with every image's URL, so a failed download
     // cannot lose the URLs of the images not yet fetched. It is rewritten with
     // the saved paths once the downloads finish (same order as saveV2Results).
     const metadataFilename = generateFilename(promptOrName, 'json');
-    const metadataPath = await claimPath(path.join(outputDir, metadataFilename));
+    let metadataPath;
     const timestamp = response.created || new Date().toISOString();
     const writeMetadata = (savedPaths) => saveMetadata(metadataPath, {
         operation,
@@ -1009,7 +1017,19 @@ async function saveResults(response, operation, promptOrName, baseOutputDir, opt
             })),
         },
     });
-    await writeMetadata(new Map());
+    try {
+        await ensureDirectory(outputDir);
+        metadataPath = await claimPath(path.join(outputDir, metadataFilename));
+        await writeMetadata(new Map());
+    }
+    catch (error) {
+        // The empty placeholder claimPath made would otherwise be left behind.
+        if (metadataPath)
+            await discardFile(metadataPath, 'the unfinished metadata file');
+        console.error(`✗ The result was generated (and billed); its URLs are printed above. ` +
+            `Nothing could be written under ${outputDir}: ${toError(error).message}`);
+        throw error;
+    }
     const savedPaths = new Map();
     try {
         for (let i = 0; i < images.length; i++) {
@@ -1029,6 +1049,14 @@ async function saveResults(response, operation, promptOrName, baseOutputDir, opt
     }
     catch (error) {
         console.error(`✗ Download failed after ${savedPaths.size}/${images.length} image(s). Result URLs are in ${metadataPath}`);
+        // Make the metadata true for what is on disk: the saved images get their paths.
+        try {
+            await writeMetadata(savedPaths);
+        }
+        catch (metadataError) {
+            console.error(`✗ Could not update ${metadataPath} with the saved files: ${toError(metadataError).message}. ` +
+                'Its entries carry no paths; the files that were saved are listed above.');
+        }
         throw error;
     }
     await writeMetadata(savedPaths);

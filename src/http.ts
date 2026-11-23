@@ -42,6 +42,30 @@ export function assertTimerMs(name: string, value: unknown): asserts value is nu
   }
 }
 
+/**
+ * Require a byte cap to be a finite integer of at least 1. NaN, Infinity,
+ * zero, negatives and fractions throw: a NaN cap would compare false against
+ * every size and never fire, so the "limit" would silently not exist.
+ */
+export function assertMaxBytes(name: string, value: unknown): asserts value is number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+    throw new Error(`${name} must be a finite integer of at least 1 byte (got ${String(value)})`);
+  }
+}
+
+/**
+ * Describe a value for an error message without echoing it: its type, and for
+ * numbers and booleans the value itself. Strings are reported by length only
+ * (a string argument may hold a key or a private prompt).
+ */
+export function describeValue(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return `an array of ${value.length}`;
+  if (typeof value === 'string') return value === '' ? 'an empty string' : `a string of ${value.length} characters`;
+  if (typeof value === 'number' || typeof value === 'boolean') return `${typeof value} ${String(value)}`;
+  return typeof value;
+}
+
 /** Approximate multipart overhead per part (boundary, headers, CRLFs). */
 const PART_OVERHEAD_BYTES = 256;
 
@@ -74,7 +98,7 @@ export class ResponseTooLargeError extends Error {
 async function checkDeclaredLength(response: Response, maxBytes: number): Promise<void> {
   const declared = Number(response.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > maxBytes) {
-    // best effort: the size error below is already decided; a failed cancel adds nothing
+    // AUDIT-OK(no_empty_catch): the size error below is already decided; a failed cancel adds nothing
     await response.body?.cancel().catch(() => undefined);
     throw new ResponseTooLargeError(maxBytes);
   }
@@ -82,7 +106,7 @@ async function checkDeclaredLength(response: Response, maxBytes: number): Promis
 
 /**
  * Remove a file that a failed write left behind. A file that is already gone
- * (ENOENT) is fine. Any other failure leaves the file on disk: it is logged
+ * (ENOENT, or ENOTDIR when a parent of the path is a file) is fine. Any other failure leaves the file on disk: it is logged
  * with the path and `false` is returned, never swallowed. Returns true when the
  * file is gone afterwards.
  *
@@ -93,7 +117,9 @@ export async function discardFile(filePath: string, what: string): Promise<boole
     await unlink(filePath);
     return true;
   } catch (unlinkError) {
-    if ((unlinkError as NodeJS.ErrnoException)?.code === 'ENOENT') return true;
+    // ENOENT: already gone. ENOTDIR: a parent of the path is a file, so the path cannot exist.
+    const code = (unlinkError as NodeJS.ErrnoException)?.code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return true;
     const reason = unlinkError instanceof Error ? unlinkError.message : String(unlinkError);
     logger.warn(`Could not remove ${what} ${filePath}: ${reason}. Delete it manually.`);
     return false;
@@ -118,6 +144,7 @@ function byteLimit(maxBytes: number): Transform {
  * as it streams).
  */
 export async function readBodyWithLimit(response: Response, maxBytes: number): Promise<Buffer> {
+  assertMaxBytes('maxBytes', maxBytes);
   await checkDeclaredLength(response, maxBytes);
   if (!response.body) return Buffer.alloc(0);
   const chunks: Buffer[] = [];
@@ -128,7 +155,7 @@ export async function readBodyWithLimit(response: Response, maxBytes: number): P
     if (done) break;
     seen += value.byteLength;
     if (seen > maxBytes) {
-      // best effort: the size error is already decided; a failed cancel adds nothing
+      // AUDIT-OK(no_empty_catch): the size error is already decided; a failed cancel adds nothing
       await reader.cancel().catch(() => undefined);
       throw new ResponseTooLargeError(maxBytes);
     }
@@ -146,6 +173,7 @@ export async function readBodyWithLimit(response: Response, maxBytes: number): P
  * over the cap fails before the file is created.
  */
 export async function streamToFile(response: Response, outputPath: string, maxBytes: number): Promise<void> {
+  assertMaxBytes('maxBytes', maxBytes);
   await checkDeclaredLength(response, maxBytes);
   if (!response.body) {
     throw new Error(`Response has no body (HTTP ${response.status}) to write to ${outputPath}`);
@@ -158,11 +186,8 @@ export async function streamToFile(response: Response, outputPath: string, maxBy
     // failure leaves a partial file behind: discardFile warns, and the original
     // error is still the one thrown.
     if (!(await discardFile(outputPath, 'the partial download')) && error !== null && typeof error === 'object') {
-      try {
-        (error as { partialFile?: string }).partialFile = outputPath;
-      } catch {
-        // best effort: a frozen error object cannot carry the tag; the warning already names the file
-      }
+      // Reflect.set returns false (never throws) on a frozen error; the warning already names the file.
+      Reflect.set(error, 'partialFile', outputPath);
     }
     throw error;
   }
@@ -182,6 +207,7 @@ export interface SafeFetchOptions {
  * chain. Throws on a non-2xx final response.
  */
 export async function fetchFollowingRedirects(url: string, options: SafeFetchOptions): Promise<Response> {
+  assertTimerMs('timeoutMs', options.timeoutMs);
   const maxRedirects = options.maxRedirects ?? 5;
   const signal = AbortSignal.timeout(options.timeoutMs);
   let current = url;
@@ -189,16 +215,16 @@ export async function fetchFollowingRedirects(url: string, options: SafeFetchOpt
     const target = await options.validate(current);
     const response = await fetch(target, { redirect: 'manual', signal });
     if (response.status >= 300 && response.status < 400 && response.headers.get('location')) {
+      // AUDIT-OK(no_empty_catch): the redirect is followed or refused regardless; a failed cancel changes nothing
+      await response.body?.cancel().catch(() => undefined);
       if (hop >= maxRedirects) {
         throw new Error(`Too many redirects (more than ${maxRedirects})`);
       }
-      // best effort: the redirect is being followed; a failed cancel changes nothing
-      await response.body?.cancel().catch(() => undefined);
       current = new URL(response.headers.get('location') as string, target).href;
       continue;
     }
     if (!response.ok) {
-      // best effort: the status error is already decided; a failed cancel adds nothing
+      // AUDIT-OK(no_empty_catch): the status error is already decided; a failed cancel adds nothing
       await response.body?.cancel().catch(() => undefined);
       throw new Error(`Download failed with status code ${response.status}`);
     }

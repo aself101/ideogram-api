@@ -27,6 +27,18 @@ export declare const MAX_TIMER_MS = 2147483647;
  */
 export declare function assertTimerMs(name: string, value: unknown): asserts value is number;
 /**
+ * Require a byte cap to be a finite integer of at least 1. NaN, Infinity,
+ * zero, negatives and fractions throw: a NaN cap would compare false against
+ * every size and never fire, so the "limit" would silently not exist.
+ */
+export declare function assertMaxBytes(name: string, value: unknown): asserts value is number;
+/**
+ * Describe a value for an error message without echoing it: its type, and for
+ * numbers and booleans the value itself. Strings are reported by length only
+ * (a string argument may hold a key or a private prompt).
+ */
+export declare function describeValue(value: unknown): string;
+/**
  * Size of a FormData body: every part's bytes plus a fixed per-part allowance
  * for the multipart framing. Close enough to compare with a ceiling that
  * already carries a 1MB margin.
@@ -38,7 +50,7 @@ export declare class ResponseTooLargeError extends Error {
 }
 /**
  * Remove a file that a failed write left behind. A file that is already gone
- * (ENOENT) is fine. Any other failure leaves the file on disk: it is logged
+ * (ENOENT, or ENOTDIR when a parent of the path is a file) is fine. Any other failure leaves the file on disk: it is logged
  * with the path and `false` is returned, never swallowed. Returns true when the
  * file is gone afterwards.
  *

@@ -7,6 +7,23 @@
  */
 import type { SpinnerObject } from './types/index.js';
 /**
+ * Set process.env.IDEOGRAM_API_KEY from a .env file, for the CLI only.
+ *
+ * Until 2.0 the library loaded the cwd .env and ~/.ideogram/.env into
+ * process.env at import, every variable in them. Now only the CLI reads them,
+ * and only IDEOGRAM_API_KEY is taken (via `dotenv.parse`, which does not touch
+ * process.env). Precedence is unchanged: an IDEOGRAM_API_KEY already in the
+ * environment wins (even an empty one, as before), then the first file that
+ * defines the key: `<cwd>/.env`, then `<home>/.ideogram/.env`. The --api-key
+ * flag outranks all of these (getIdeogramApiKey).
+ *
+ * A missing file is normal and silent; any other read or parse failure is
+ * logged with the path and the next file is tried.
+ *
+ * @returns The file the key was taken from, or undefined if none supplied it
+ */
+export declare function loadDotenvApiKey(cwd?: string, home?: string): string | undefined;
+/**
  * Create an empty file at `filePath` that nothing else owns, and return its
  * path. If the name is taken, `-2`, `-3`, ... is inserted before the extension
  * until one is free (created with the `wx` flag, so two writers cannot claim

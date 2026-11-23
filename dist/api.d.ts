@@ -44,6 +44,17 @@ export declare class IdeogramAPIError extends Error {
      * for a timeout). The request may still have run server-side.
      */
     readonly code?: string;
+    /**
+     * True when the request was sent and its outcome is unknown or server-side
+     * failed: no response, a response body that could not be read or parsed, an
+     * over-size body, or a 5xx. The generation may have run and been billed, so
+     * check usage (or the generation id) before retrying. False for 4xx
+     * validation, auth and rate-limit answers, for anything thrown before the
+     * request was sent, and for failed status polls (a GET is never billed).
+     */
+    readonly possiblyBilled: boolean;
+    /** Polling: the generation being waited on, so a failed wait can be resumed. */
+    readonly generationId?: string;
     constructor(message: string, details?: {
         status?: number;
         rejectReason?: string;
@@ -51,6 +62,8 @@ export declare class IdeogramAPIError extends Error {
         failureReason?: string;
         body?: unknown;
         code?: string;
+        possiblyBilled?: boolean;
+        generationId?: string;
         cause?: unknown;
     });
 }
@@ -273,7 +286,8 @@ export declare class IdeogramAPI {
     /**
      * Generate with Ideogram 4.5, or edit source images with a prompt (multipart).
      * With `images`, the first image is edited and the rest are references;
-     * `mask` limits the edit to part of the first image.
+     * `mask` marks the area to edit (black = edit, white = keep); the API does not reliably
+     * confine the edit to that area, so check the result.
      *
      * @example
      * const res = await api.generateV45({ prompt: 'A poster that says OPEN LATE', quality: 'high' });
@@ -470,12 +484,15 @@ export declare class IdeogramAPI {
      * Get the status (and, when complete, the results) of an async generation.
      *
      * @param generationId - The generation_id returned by a v2 request
+     * @param options - `timeoutMs`: request timeout (default 120000)
      *
      * @example
      * const status = await api.getGeneration(res.generation_id);
      * if (status.status === 'completed') console.log(status.data);
      */
-    getGeneration(generationId: string): Promise<GenerationStatus>;
+    getGeneration(generationId: string, options?: {
+        timeoutMs?: number;
+    }): Promise<GenerationStatus>;
     /**
      * Poll a generation until it completes or fails.
      * A 429 while polling backs off (doubling the interval, at least 1s and up to 30s, and never

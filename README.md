@@ -11,10 +11,6 @@ This service follows the data-collection architecture pattern with organized dat
 
 HTTP goes through Node's built-in `fetch`; the package has no HTTP-client dependency.
 
-## Quick Demo
-
-**Coming Soon:** Asciinema CLI demo
-
 ## Quick Start
 
 ### CLI Usage
@@ -90,8 +86,8 @@ The Ideogram API provides access to state-of-the-art image generation and manipu
 - **Synchronous by default** - Ideogram 3.0 and the v2 image endpoints return results directly; SVG and video return a `generation_id` to poll (`waitForGeneration`, or `--wait` on the CLI)
 - **Production Security** - API key redaction, error sanitization, HTTPS enforcement, comprehensive SSRF protection (including IPv4-mapped IPv6 bypass prevention, checked again on every download redirect)
 - **DoS Prevention** - Request timeouts (120s v1 API, 300s v2 API, 60s image downloads), file size limits, redirect limits
-- **DNS Rebinding Prevention** - Blocks domains resolving to internal IPs (prevents TOCTOU attacks)
-- **Parameter Validation** - Pre-flight validation catches invalid parameters before API calls
+- **DNS Resolution Check** - Refuses hostnames where any resolved address is internal or reserved; the connection is not pinned to the checked address, so DNS rebinding between check and download is not prevented
+- **Parameter Validation** - The CLI validates parameters before API calls; library v2 calls are unvalidated unless you call `validateV2Params`
 - **API Key Authentication** - Multiple configuration methods with secure handling
 - **Batch Processing** - Generate multiple images sequentially from multiple prompts
 - **Helper Commands** - Easy discovery with list-style-presets, list-aspect-ratios, list-resolutions
@@ -326,6 +322,13 @@ Failures throw `IdeogramAPIError` (a subclass of `Error`):
 - `rejectReason` / `maxInflightRequests`: why a 402 or 429 was refused (`insufficient_funds`, `inflight_limit`, ...).
 - `failureReason`: from `waitForGeneration`, why an async generation failed (e.g. `content_policy_violation`).
 - `code`: set when **no HTTP response arrived** (e.g. `ECONNRESET`, or `ETIMEDOUT` for a timeout).
+- `possiblyBilled`: `true` when the request was sent and the outcome is unknown or failed after sending (no response, unreadable or malformed body, too-large body, 5xx); `false` for 4xx and anything rejected before sending.
+- `generationId`: set on errors from `waitForGeneration` polling. The CLI prints the resume command (`ideogram get-generation <id> --wait`, or `ideogram get-generation --wait -- <id>` when the id starts with `-`).
+
+```typescript
+try { await api.generateV46({ prompt: 'A lighthouse', quality: 'low' }); }
+catch (e) { if (e instanceof IdeogramAPIError && e.possiblyBilled) { /* check usage before retrying */ } else { /* safe to fix and retry */ } }
+```
 
 Every failure after the request was sent is an `IdeogramAPIError`, including a malformed JSON body, a timeout while reading the body, a non-JSON `Content-Type`, and a response body over 100MB; each carries the HTTP `status` where there is one.
 
@@ -403,6 +406,7 @@ await downloadToFile('https://ideogram.ai/api/images/ephemeral/example.mp4', './
 - **`upscale()` moved to the v2 API** (`/v2/image/upscale/auto`), because Ideogram retired the v1 endpoint. It takes only `image`, `upscaleFactor` (`'x2'` | `'x4'` | `'x8'`), `seed` and the v2 options (`async`, `webhookUrl`, `dryRun`, `timeoutMs`). Passing `prompt`, `resemblance`, `detail`, `magicPromptOption` or `numImages` throws. It returns an `UpscaleResponse`; use `extractImageUrls` for the URL. On the CLI, `--prompt`, `--resemblance`, `--detail`, `--magic-prompt-option` and `--num-images` are removed from `upscale`, and output goes to `upscale-auto/` (was `upscale/`).
 - **`ENDPOINTS.UPSCALE` is now `ENDPOINTS.UPSCALE_AUTO`**, and the `'upscale'` entry is gone from `OPERATION_CONSTRAINTS`.
 - **Option constants are literal tuples** (`as const`) rather than `string[]`, so `(typeof RENDERING_SPEEDS)[number]` is a union of the literal values.
+- **Importing the library no longer loads `.env` files.** Only the `ideogram` CLI reads them, and only `IDEOGRAM_API_KEY` (cwd `.env`, then `~/.ideogram/.env`); other variables in those files are not loaded, so `IDEOGRAM_OUTPUT_DIR` or `NODE_ENV` set in a `.env` file no longer take effect (set them in the real environment). CLI precedence is unchanged: `--api-key`, then `IDEOGRAM_API_KEY` in the environment, then cwd `.env`, then `~/.ideogram/.env`. Library users must pass the key or set it themselves.
 - **`buildFormData` names and types file parts from their bytes.** Each file part is now `image.png` / `image/png`, `audio.wav` / `audio/wav` and so on, where 1.x sent every file as `image.jpg`. Bytes it does not recognize still go as `image.jpg` / `image/jpeg`.
 - **CLI helpers removed from `ideogram-api/utils`:** `saveImage`, `generateFilename`, `ensureDirectory`, `saveMetadata`, `pause`, `createSpinner` and the `logger` re-export. They were CLI plumbing and moved to an internal CLI module. Copy the few lines you need, or use Node's `fs` (`fs.mkdir(dir, { recursive: true })`, `fs.writeFile`). `setLogLevel` is still exported.
 
@@ -421,6 +425,14 @@ import { extractImageUrls } from 'ideogram-api';
 
 const result = await api.upscale({ image: './photo.jpg', upscaleFactor: 'x2' });
 console.log(extractImageUrls(result));
+```
+
+```typescript
+// 1.x: importing 'ideogram-api' loaded .env, so this worked with no key in code
+const api = new IdeogramAPI();
+
+// 2.0: pass the key, or set IDEOGRAM_API_KEY yourself (node --env-file=.env app.js)
+const api = new IdeogramAPI(process.env.IDEOGRAM_API_KEY!);
 ```
 
 ```bash
@@ -454,9 +466,11 @@ export IDEOGRAM_API_KEY=your_api_key
 ideogram generate --prompt "landscape"
 ```
 
+These options apply to the `ideogram` CLI. The library never reads `.env` files: pass the key to `new IdeogramAPI(apiKey)` or set `IDEOGRAM_API_KEY` yourself (e.g. `node --env-file=.env`).
+
 #### Option C: Local .env File (Project-Specific)
 
-Create `.env` in your project directory:
+Create `.env` in your project directory. The CLI reads only `IDEOGRAM_API_KEY` from it:
 
 ```bash
 IDEOGRAM_API_KEY=your_api_key
@@ -651,7 +665,7 @@ ideogram <operation> [options]
 ### Edit-Specific Options
 
 ```bash
---mask <path>                Mask image file path (required)
+--mask <path>                Mask image file path (required). Intent: black = edit, white = keep; the API does not reliably confine edits to it (see Masks under the v2 API)
 ```
 
 ### Remix-Specific Options
@@ -1063,7 +1077,7 @@ datasets/ideogram/
 
 v2 metadata files record `generationId` and `usageCostUsdMicros` (when Ideogram reports it), and list each result under `response.items` with its `objectType`, saved `path` and, for videos, the measured `duration` and `aspectRatio`.
 
-Output files never overwrite each other: each item gets its own name (the index survives truncation of long prompts), and an existing file is never replaced. Every CLI command writes the metadata file (generation id and every URL where there is one) before downloading, so a failed download keeps the record; if the CLI cannot remove a partial or empty output file after a failed write, it warns and names the file.
+Output files never overwrite each other: each item gets its own name (the index survives truncation of long prompts), and an existing file is never replaced. Before writing anything to disk, the CLI prints the generation id and every result URL, so a disk error cannot lose a billed result; a `--dry-run` that comes back with a real result is reported loudly and saved, and the command exits non-zero. Every CLI command writes the metadata file (generation id and every URL where there is one) before downloading, so a failed download keeps the record; if the CLI cannot remove a partial or empty output file after a failed write, it warns and names the file.
 
 **Metadata Format:**
 
@@ -1114,12 +1128,7 @@ Keys are never logged in full, even in DEBUG mode.
 
 ### Error Message Sanitization
 
-In production mode (`NODE_ENV=production`), detailed error messages are replaced with generic ones to prevent information disclosure:
-
-```javascript
-// Development: "Error: Invalid aspect ratio '16:10'. Must be one of: ..."
-// Production: "An error occurred during the request."
-```
+In production mode (`NODE_ENV=production`), detailed error messages are replaced with generic ones to prevent information disclosure. For failures that are possibly billed (see `possiblyBilled` under [Errors](#errors)), the message says the request may have run and been billed and to check usage before retrying, instead of suggesting a retry.
 
 ### SSRF Protection (Server-Side Request Forgery)
 
@@ -1129,7 +1138,8 @@ All image URLs are validated before processing to prevent attacks:
 - **Private IP ranges**: `10.x`, `192.168.x`, `172.16-31.x`, `169.254.x`
 - **Cloud metadata endpoints**: `169.254.169.254`, `metadata.google.internal`
 - **IPv4-Mapped IPv6 bypass prevention**: Detects `[::ffff:127.0.0.1]` attempts
-- **DNS rebinding prevention**: Resolves domains and blocks those pointing to internal IPs
+- **Reserved ranges**: Addresses are parsed, so IPv4-mapped IPv6 in any spelling and unspecified, unique-local, link-local, CGNAT and other reserved ranges are refused
+- **DNS resolution check**: Resolves the hostname and refuses it if any address it resolves to is blocked. The connection is not pinned to the checked address, so a host that changes its DNS answer between the check and the download (DNS rebinding) is not prevented
 
 ### Image File Validation
 
@@ -1156,11 +1166,13 @@ const api = new IdeogramAPI('key', 'http://insecure-api.com');
 
 ### Parameter Validation
 
-All parameters are validated before making API calls using `validateOperationParams()`:
+The CLI validates every request before sending it (`validateOperationParams()` for v1 operations, `validateV2Params()` for v2):
 
 - Catches invalid parameters early
 - Saves API credits by preventing failed requests
 - Provides clear error messages
+
+The library does not do this for you on v2: it sends v2 parameters unvalidated. Call `validateV2Params(operation, params)` from `ideogram-api/config` before you send.
 
 ## Error Handling
 
@@ -1225,7 +1237,7 @@ Error: IDEOGRAM_API_KEY not found. Please provide your API key via one of these 
 export IDEOGRAM_API_KEY=your_api_key
 ```
 
-Or create a `.env` file:
+Or, for the CLI, create a `.env` file (the library does not read `.env` files):
 
 ```bash
 echo "IDEOGRAM_API_KEY=your_api_key" > .env
@@ -1490,7 +1502,7 @@ Images are generated sequentially with organized output.
 
 ## Configuration
 
-Environment variables:
+Environment variables (read from the real environment; a `.env` file supplies only `IDEOGRAM_API_KEY`, and only to the CLI):
 
 ```bash
 # Required
@@ -1626,6 +1638,11 @@ Contributions welcome! Please follow the existing code patterns and include test
 - CLI output files never overwrite each other: each item gets its own name (the index survives truncation of long prompts) and an existing file is never replaced
 - Every CLI command (v1 and v2) writes the metadata file before downloading, so a failed download keeps the record; the CLI warns, naming the file, when it cannot remove a partial or empty output file after a failed write
 - `ideogram --version` prints `unknown` if it cannot read its package.json
+- **Breaking:** importing the library no longer loads any `.env` file. Only the `ideogram` CLI reads `.env` files, and only `IDEOGRAM_API_KEY` from them; see [Migrating from 1.x](#migrating-from-1x)
+- `validateImageUrl` (the SSRF guard behind the download helpers) checks every address a hostname resolves to and parses addresses, so IPv4-mapped IPv6 in any spelling and the unspecified, unique-local, link-local, CGNAT and other reserved ranges are refused; it does not pin the connection to the checked address
+- `IdeogramAPIError.possiblyBilled` is `true` when the request was sent and the outcome is unknown or failed after sending; errors from `waitForGeneration` polling carry `generationId`, and the CLI prints the `get-generation --wait` resume command
+- With `NODE_ENV=production`, messages for possibly-billed failures say the request may have run and been billed and to check usage before retrying
+- The CLI prints the generation id and every result URL before writing anything to disk; a `--dry-run` that returns a real result is reported loudly and saved, and the command exits non-zero
 - Requires Node.js 22 or later; see [Migrating from 1.x](#migrating-from-1x)
 
 ### v1.0.3
