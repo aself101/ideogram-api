@@ -47,8 +47,8 @@ describe('IdeogramAPI Class', () => {
       expect(debugApi.logger.level).toBe('debug');
     });
 
-    it('should default to info log level', () => {
-      expect(api.logger.level).toBe('info');
+    it('should default to warn log level', () => {
+      expect(api.logger.level).toBe('warn');
     });
   });
 
@@ -140,18 +140,6 @@ describe('IdeogramAPI Class', () => {
       expect(process.env.NODE_ENV).toBe('development');
 
       process.env.NODE_ENV = originalEnv;
-    });
-  });
-
-  describe('Request Building', () => {
-    it('should validate FormData size before sending', () => {
-      // The _makeRequest method should check FormData size
-      expect(typeof api._makeRequest).toBe('function');
-    });
-
-    it('should validate Content-Type in responses', () => {
-      // The _makeRequest method should validate response Content-Type
-      expect(typeof api._makeRequest).toBe('function');
     });
   });
 
@@ -296,45 +284,16 @@ describe('IdeogramAPI Class', () => {
   });
 
   describe('Upscale Method', () => {
-    it('should require image', () => {
-      expect(typeof api.upscale).toBe('function');
+    it('rejects the 1.x-only fields instead of dropping them (v1 upscale was retired)', async () => {
+      for (const field of ['prompt', 'resemblance', 'detail', 'magicPromptOption', 'numImages']) {
+        await expect(api.upscale({ image: Buffer.from([0xff, 0xd8, 0xff]), [field]: 1 })).rejects.toThrow(
+          `does not accept ${field}`
+        );
+      }
     });
 
-    it('should accept resemblance and detail parameters', () => {
-      const params = {
-        image: './low_res.jpg',
-        resemblance: 85,
-        detail: 90
-      };
-
-      expect(typeof api.upscale).toBe('function');
-    });
-
-    it('should accept optional prompt', () => {
-      const params = {
-        image: Buffer.from([0xFF, 0xD8]),
-        prompt: 'Enhance details',
-        resemblance: 80,
-        detail: 95,
-        numImages: 2
-      };
-
-      expect(typeof api.upscale).toBe('function');
-    });
-
-    it('should build image_request object', () => {
-      const params = {
-        image: './image.jpg',
-        prompt: 'upscale',
-        resemblance: 90,
-        detail: 85,
-        magicPromptOption: 'ON',
-        numImages: 1,
-        seed: 99999
-      };
-
-      expect(typeof api.upscale).toBe('function');
-      // Method should build image_request nested object
+    it('requires an image', async () => {
+      await expect(api.upscale({})).rejects.toThrow('image is required');
     });
   });
 
@@ -490,21 +449,6 @@ describe('Security Features', () => {
     });
   });
 
-  describe('FormData Size Validation', () => {
-    it('should have FormData size limit', () => {
-      // The _makeRequest method includes FormData size validation
-      expect(typeof api._makeRequest).toBe('function');
-      // Max size should be 50MB as per security requirements
-    });
-  });
-
-  describe('Content-Type Validation', () => {
-    it('should validate response Content-Type', () => {
-      // The _makeRequest method includes Content-Type validation
-      expect(typeof api._makeRequest).toBe('function');
-      // Should only accept application/json responses
-    });
-  });
 });
 
 describe('Parameter Handling', () => {
