@@ -97,7 +97,9 @@ export declare function saveMetadata(metadataPath: string, metadata: Record<stri
 export declare function pause(ms: number): Promise<void>;
 /**
  * Create a spinner for long-running operations.
- * Returns an object with start(), stop(), and update() methods.
+ * Returns an object with start(), stop(), and update() methods. Frames are
+ * written only when stdout is a TTY; otherwise nothing is written until stop(),
+ * which prints the final message once (so a log or pipe gets no frame noise).
  *
  * @param message - Message to display with spinner
  * @returns Spinner object with start(), stop(), and update() methods

@@ -38,7 +38,7 @@ import { fileURLToPath } from 'url';
 import { IdeogramAPI, extractImages, extractDescriptions, } from './api.js';
 import { getIdeogramApiKey, validateOperationParams, DEFAULT_OUTPUT_DIR, ASPECT_RATIOS, RESOLUTIONS, RENDERING_SPEEDS, STYLE_PRESETS, V4_RESOLUTIONS, V4_ASPECT_RATIOS, V4_RENDERING_SPEEDS, V4_OUTPUT_RESOLUTIONS, V45_QUALITIES, V45_BACKGROUNDS, V46_SIZES, AUTO_RESOLUTION_TIERS, AUTO_STYLE_TYPES, V2_COLOR_PALETTE_PRESETS, SVG_QUALITIES, UPSCALE_FACTORS, ASSET_TYPES, MINIMAX_H3_ASPECT_RATIOS, MINIMAX_H3_RESOLUTIONS, MINIMAX_H3_PROMPT_EXPANSION_MODES, SEEDANCE_25_ASPECT_RATIOS, SEEDANCE_25_RESOLUTIONS, } from './config.js';
 import { saveImage, saveMetadata, generateFilename, ensureDirectory, createSpinner, claimPath, loadDotenvApiKey, } from './cli-io.js';
-import { logger } from './logger.js';
+import { logger, normalizeLogLevel } from './logger.js';
 import { discardFile } from './http.js';
 import { setLogLevel, assertSquareImage, toError } from './utils.js';
 import { executeV2, executeAsyncV2, executeGetGeneration, describeError, reportCommandError, fetchImage, parseIntOption, } from './cli-v2.js';
@@ -201,7 +201,7 @@ IDEOGRAM 4.0 / 4.5 / AUTO (v2 API)
 21. Ideogram 4.0
     $ ideogram generate-v4 --prompt "A lighthouse at dawn" --resolution 2048x2048
 
-22. Price a request first (free: nothing is generated or billed)
+22. Price a request first (the request is priced instead of run; a result that is not a quote is an error)
     $ ideogram generate-v4 --prompt "A lighthouse at dawn" --dry-run
 
 23. Transparent PNG at 4k
@@ -343,11 +343,21 @@ export function createProgram() {
         .version(version)
         .option('--api-key <key>', 'Ideogram API key')
         .option('-o, --output-dir <path>', 'Output directory', DEFAULT_OUTPUT_DIR)
-        .option('--log-level <level>', 'Logging level (debug, info, warn, error)', 'info')
+        .option('--log-level <level>', 'Logging level (debug, info, warn, error; case-insensitive)', 'info')
         .option('--examples', 'Show usage examples')
         // Set on the root before any subcommand exists: commander copies it into each one at
         // creation. Left at its default, `generate-v46 -p A fox runs` sends (and bills) "A".
-        .allowExcessArguments(false);
+        .allowExcessArguments(false)
+        // Before any command runs: an unknown level is a usage error, not a silent fallback.
+        .hook('preAction', () => {
+        try {
+            normalizeLogLevel(String(program.opts().logLevel), '--log-level');
+        }
+        catch (error) {
+            console.error(`Error: ${toError(error).message}`);
+            process.exit(1);
+        }
+    });
     // GENERATE command
     program
         .command('generate')
@@ -654,7 +664,7 @@ export function createProgram() {
             cmd.option('--prompt-expansion-mode <mode>', `How much the prompt may be rewritten (${MINIMAX_H3_PROMPT_EXPANSION_MODES.join(', ')})`);
         }
         if (!minimax) {
-            cmd.option('--generate-audio', 'Generate an audio track (documented to roughly double the cost; price with --dry-run)');
+            cmd.option('--generate-audio', "Generate an audio track (Ideogram's docs say audio roughly doubles the cost; at 480p / 4 s it did not change the quote or the bill (2026-11-22). Run --dry-run to see the price.)");
         }
         addAsyncOptions(cmd).action(async (options) => {
             await executeAsyncV2(v.op, options, program.opts());

@@ -76,11 +76,25 @@ export declare function describeError(err: Error & {
  */
 export declare function getGenerationCommand(generationId: string): string;
 /**
- * Print a failed command's error, and for a resumable failure (`resumable`)
- * the command that picks the generation up, or for any other error that may
- * have been billed (possiblyBilled) the billing note. A generation that was
- * submitted keeps running (and stays billed) after a transient polling failure.
- * A generation the API reported as failed, or a 404, has nothing to resume.
+ * Whether the CLI adds the billing line after an error. Only for an error that
+ * may have been billed (`possiblyBilled`) and whose message does not already end
+ * with BILLING_NOTE. Not for a non-resumable polling error (one carrying a
+ * generationId) with status 400, 404, 410 or 422: the id was never seen to be
+ * submitted by this call, so the line would claim a charge nothing shows.
+ */
+export declare function shouldAppendBillingNote(err: {
+    message?: string;
+    status?: unknown;
+    resumable?: unknown;
+    possiblyBilled?: unknown;
+    generationId?: unknown;
+}): boolean;
+/**
+ * Print a failed command's error, and for a polling failure that carries a
+ * generation id the hint to pick it up: with the key hint for a 401/403 (chosen
+ * from the status, whatever `resumable` says), the plain resume command for a
+ * resumable failure. Otherwise the billing note when shouldAppendBillingNote
+ * says so. A generation the API reported as failed, or a 404, has nothing to resume.
  */
 export declare function reportCommandError(err: Error & {
     generationId?: unknown;

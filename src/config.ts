@@ -26,7 +26,6 @@ import type {
   OperationKey,
   ValidationParams,
   V2ColorPalette,
-  V2OperationKey,
 } from './types/index.js';
 
 /** Base URL of the Ideogram API. */
@@ -500,8 +499,8 @@ export function assertColorPalette(palette: unknown): asserts palette is V2Color
   }
 }
 
-/** Every v2 operation key, for rejecting an unknown one by name. */
-const V2_OPERATION_KEYS: readonly V2OperationKey[] = [
+/** Every v2 operation key, for rejecting an unknown one by name. `V2OperationKey` is derived from it. */
+export const V2_OPERATION_KEYS = [
   'generate-v4',
   'generate-v4-transparent',
   'generate-v4-custom',
@@ -518,7 +517,10 @@ const V2_OPERATION_KEYS: readonly V2OperationKey[] = [
   'seedance-2-5-text-to-video',
   'seedance-2-5-image-to-video',
   'seedance-2-5-reference-to-video',
-];
+] as const;
+
+/** v2 operation keys accepted by validateV2Params (re-exported from types). */
+export type V2OperationKey = (typeof V2_OPERATION_KEYS)[number];
 
 /**
  * Validate parameters for a v2 operation against the documented rules.
@@ -541,7 +543,7 @@ const V2_OPERATION_KEYS: readonly V2OperationKey[] = [
 export function validateV2Params(operation: V2OperationKey, params: V2ValidationParams): void {
   const L = V2_LIMITS;
 
-  if (!V2_OPERATION_KEYS.includes(operation)) {
+  if (!(V2_OPERATION_KEYS as readonly string[]).includes(operation)) {
     throw new Error(`Unknown v2 operation '${String(operation)}'. Valid: ${V2_OPERATION_KEYS.join(', ')}`);
   }
 

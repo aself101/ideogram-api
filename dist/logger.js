@@ -9,6 +9,19 @@
 import winston from 'winston';
 /** Every winston npm level, so the Console transport writes all of them to stderr. */
 export const ALL_LOG_LEVELS = ['error', 'warn', 'info', 'http', 'verbose', 'debug', 'silly'];
+/** The levels a caller may ask for. */
+export const LOG_LEVELS = ['error', 'warn', 'info', 'debug'];
+/**
+ * Lowercase a requested log level and check it is one of LOG_LEVELS.
+ * @throws Error naming the bad value and the valid ones
+ */
+export function normalizeLogLevel(level, name = 'log level') {
+    const normalized = typeof level === 'string' ? level.trim().toLowerCase() : level;
+    if (!LOG_LEVELS.includes(normalized)) {
+        throw new Error(`Invalid ${name} '${String(level)}'. Use one of: ${LOG_LEVELS.join(', ')}`);
+    }
+    return normalized;
+}
 export const logger = winston.createLogger({
     level: 'warn',
     format: winston.format.combine(winston.format.timestamp(), winston.format.printf(({ timestamp, level, message }) => {

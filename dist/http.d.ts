@@ -93,4 +93,12 @@ export declare function describeNetworkError(error: unknown, timeoutMs?: number)
     message: string;
     code?: string;
 };
+/**
+ * Make server-supplied text safe to print (CWE-150). Drops ANSI/OSC escape
+ * sequences whole, then every remaining C0 control character except tab, DEL
+ * and every C1 control character. CR and LF become a single space so two lines
+ * do not run together. Call it where text enters a message, a log line or CLI
+ * output; keep the raw value on `error.body` for programmatic use.
+ */
+export declare function sanitizeServerText(text: string): string;
 //# sourceMappingURL=http.d.ts.map

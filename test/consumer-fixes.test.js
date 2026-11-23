@@ -86,10 +86,10 @@ describe('item 1: resumable', () => {
     expect(e.message).toContain('polling again will not succeed');
   });
 
-  it.each([401, 403])('%i is resumable after fixing the key, and the message says so', async (status) => {
+  it.each([401, 403])('%i is not resumable (same client, rejected key), and the message says to fix the key', async (status) => {
     fetchMock.mockResolvedValue(fakeResponse(status, { message: 'nope' }));
     const e = await wait(api());
-    expect(e.resumable).toBe(true);
+    expect(e.resumable).toBe(false);
     expect(e.possiblyBilled).toBe(true);
     expect(e.message).toContain('fix the key, then resume with get-generation');
   });
@@ -137,7 +137,8 @@ describe('item 1: resumable', () => {
   it('the CLI prints the resume hint only for a resumable error (field, not inference)', () => {
     reportCommandError(new IdeogramAPIError('Not found', { generationId: 'g1', possiblyBilled: true, resumable: false, status: 404 }));
     expect(err()).not.toContain('Resume with');
-    expect(err()).toContain(BILLING_NOTE);
+    // A 404 for a polled id: this call never saw it submitted, so no billing line (release-fixes item 2a).
+    expect(err()).not.toContain(BILLING_NOTE);
     errors.length = 0;
     reportCommandError(new IdeogramAPIError('5xx', { generationId: 'g1', possiblyBilled: true, resumable: true, status: 503 }));
     expect(err()).toContain('Resume with: ideogram get-generation g1 --wait');

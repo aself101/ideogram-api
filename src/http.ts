@@ -245,3 +245,18 @@ export function describeNetworkError(error: unknown, timeoutMs?: number): { mess
   const reason = err?.cause?.message || err?.message || 'no response';
   return { message: reason, code };
 }
+
+/**
+ * Make server-supplied text safe to print (CWE-150). Drops ANSI/OSC escape
+ * sequences whole, then every remaining C0 control character except tab, DEL
+ * and every C1 control character. CR and LF become a single space so two lines
+ * do not run together. Call it where text enters a message, a log line or CLI
+ * output; keep the raw value on `error.body` for programmatic use.
+ */
+export function sanitizeServerText(text: string): string {
+  return text
+    .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/g, '')
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
+}

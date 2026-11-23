@@ -19,7 +19,7 @@
  * 2. Sign up or log in to your account
  * 3. Generate a new API key from the API dashboard
  */
-import type { OperationConstraints, ValidationParams, V2ColorPalette, V2OperationKey } from './types/index.js';
+import type { OperationConstraints, ValidationParams, V2ColorPalette } from './types/index.js';
 /** Base URL of the Ideogram API. */
 export declare const BASE_URL = "https://api.ideogram.ai";
 /** Version segment of the v1 endpoint paths (v2 endpoints spell their own /v2/ prefix). */
@@ -293,6 +293,10 @@ export declare function parseContextWindow(value: string, imageDims?: {
  * assertColorPalette({ members: [{ color_hex: '#FF0000', color_weight: 0.5 }] });
  */
 export declare function assertColorPalette(palette: unknown): asserts palette is V2ColorPalette;
+/** Every v2 operation key, for rejecting an unknown one by name. `V2OperationKey` is derived from it. */
+export declare const V2_OPERATION_KEYS: readonly ["generate-v4", "generate-v4-transparent", "generate-v4-custom", "generate-v45", "generate-v46", "generate-auto", "precise-edit-v45", "precise-edit-v46", "upscale-auto", "generate-svg", "minimax-h3-text-to-video", "minimax-h3-image-to-video", "minimax-h3-reference-to-video", "seedance-2-5-text-to-video", "seedance-2-5-image-to-video", "seedance-2-5-reference-to-video"];
+/** v2 operation keys accepted by validateV2Params (re-exported from types). */
+export type V2OperationKey = (typeof V2_OPERATION_KEYS)[number];
 /**
  * Validate parameters for a v2 operation against the documented rules.
  * Catches mistakes before a request is sent; the CLI runs it on every v2 command.

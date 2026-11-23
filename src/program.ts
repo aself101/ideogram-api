@@ -83,7 +83,7 @@ import {
   claimPath,
   loadDotenvApiKey,
 } from './cli-io.js';
-import { logger } from './logger.js';
+import { logger, normalizeLogLevel } from './logger.js';
 import { discardFile } from './http.js';
 import { setLogLevel, assertSquareImage, toError } from './utils.js';
 import {
@@ -341,7 +341,7 @@ IDEOGRAM 4.0 / 4.5 / AUTO (v2 API)
 21. Ideogram 4.0
     $ ideogram generate-v4 --prompt "A lighthouse at dawn" --resolution 2048x2048
 
-22. Price a request first (free: nothing is generated or billed)
+22. Price a request first (the request is priced instead of run; a result that is not a quote is an error)
     $ ideogram generate-v4 --prompt "A lighthouse at dawn" --dry-run
 
 23. Transparent PNG at 4k
@@ -510,11 +510,20 @@ export function createProgram(): Command {
     .version(version)
     .option('--api-key <key>', 'Ideogram API key')
     .option('-o, --output-dir <path>', 'Output directory', DEFAULT_OUTPUT_DIR)
-    .option('--log-level <level>', 'Logging level (debug, info, warn, error)', 'info')
+    .option('--log-level <level>', 'Logging level (debug, info, warn, error; case-insensitive)', 'info')
     .option('--examples', 'Show usage examples')
     // Set on the root before any subcommand exists: commander copies it into each one at
     // creation. Left at its default, `generate-v46 -p A fox runs` sends (and bills) "A".
-    .allowExcessArguments(false);
+    .allowExcessArguments(false)
+    // Before any command runs: an unknown level is a usage error, not a silent fallback.
+    .hook('preAction', () => {
+      try {
+        normalizeLogLevel(String(program.opts().logLevel), '--log-level');
+      } catch (error) {
+        console.error(`Error: ${toError(error).message}`);
+        process.exit(1);
+      }
+    });
 
   // GENERATE command
   program
@@ -890,7 +899,7 @@ export function createProgram(): Command {
       );
     }
     if (!minimax) {
-      cmd.option('--generate-audio', 'Generate an audio track (documented to roughly double the cost; price with --dry-run)');
+      cmd.option('--generate-audio', "Generate an audio track (Ideogram's docs say audio roughly doubles the cost; at 480p / 4 s it did not change the quote or the bill (2026-11-22). Run --dry-run to see the price.)");
     }
     addAsyncOptions(cmd).action(async (options: V2CliOptions) => {
       await executeAsyncV2(v.op, options, program.opts() as GlobalOptions);

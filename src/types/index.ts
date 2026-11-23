@@ -174,7 +174,7 @@ export interface UpscaleParams {
   async?: boolean;
   /** HTTPS URL Ideogram POSTs the finished result to. */
   webhookUrl?: string;
-  /** Validate and price without running or billing; resolves to a PriceQuote. */
+  /** Price the request instead of running it; resolves to a PriceQuote (EDRYRUNIGNORED if the API ran it instead). */
   dryRun?: boolean;
   /** Per-request timeout in ms (default 300000). */
   timeoutMs?: number;
@@ -511,8 +511,9 @@ export interface AssetIdentifier {
  */
 export interface V2RequestOptions {
   /**
-   * Validate and price the request without running it. Nothing is generated,
-   * stored or billed; the method resolves to a PriceQuote instead.
+   * Price the request instead of running it; the method resolves to a
+   * PriceQuote. The library checks a quote came back: if the API ran the
+   * request anyway, it throws EDRYRUNIGNORED (possiblyBilled true).
    */
   dryRun?: boolean;
   /** Per-request timeout in ms (default 300000 for v2 endpoints). */
@@ -913,21 +914,5 @@ export type GenerationRejectReason = OpenString<
   | 'feature_limit'
 >;
 
-/** v2 operation keys accepted by validateV2Params. */
-export type V2OperationKey =
-  | 'generate-v4'
-  | 'generate-v4-transparent'
-  | 'generate-v4-custom'
-  | 'generate-v45'
-  | 'generate-v46'
-  | 'generate-auto'
-  | 'precise-edit-v45'
-  | 'precise-edit-v46'
-  | 'upscale-auto'
-  | 'generate-svg'
-  | 'minimax-h3-text-to-video'
-  | 'minimax-h3-image-to-video'
-  | 'minimax-h3-reference-to-video'
-  | 'seedance-2-5-text-to-video'
-  | 'seedance-2-5-image-to-video'
-  | 'seedance-2-5-reference-to-video';
+/** v2 operation keys accepted by validateV2Params. Derived from the `V2_OPERATION_KEYS` list in config.ts, so the two cannot drift. */
+export type { V2OperationKey } from '../config.js';

@@ -5,7 +5,7 @@
  * image handling, FormData building, and data transformations.
  */
 import fs from 'fs/promises';
-import { logger } from './logger.js';
+import { logger, normalizeLogLevel } from './logger.js';
 import { assertMaxBytes, assertTimerMs, fetchFollowingRedirects, readBodyWithLimit, streamToFile } from './http.js';
 import { imageSize } from 'image-size';
 import { imageSizeFromFile } from 'image-size/fromFile';
@@ -276,7 +276,21 @@ export async function validateImagePath(filepath) {
  * await assertSquareImage(imageBuffer);
  */
 export async function assertSquareImage(imageSource) {
-    const { width, height } = await getImageDimensions(imageSource);
+    let dimensions;
+    try {
+        dimensions = await getImageDimensions(imageSource);
+    }
+    catch (error) {
+        // image-size reports a non-image as a buffer-bounds error; say what it is instead.
+        // Any format image-size reads (BMP included) still passes, as before.
+        if (typeof imageSource === 'string')
+            await validateImagePath(imageSource);
+        else if (Buffer.isBuffer(imageSource) && !detectImageType(imageSource)) {
+            throw new Error('Buffer does not appear to be a valid image (PNG, JPEG, WebP, or GIF)', { cause: error });
+        }
+        throw error;
+    }
+    const { width, height } = dimensions;
     if (width !== height) {
         throw new Error(`Image must be square. Received ${width}x${height}`);
     }
@@ -337,6 +351,16 @@ export async function loadImageAsBuffer(imagePath) {
     }
     return buffer;
 }
+/** A URL for a log line: origin and path only, so a signed query string never reaches a log. */
+function describeUrlForLog(url) {
+    try {
+        const parsed = new URL(url);
+        return `${parsed.origin}${parsed.pathname}`;
+    }
+    catch {
+        return '(unparseable URL)';
+    }
+}
 /**
  * Download image from URL and return as Buffer.
  * Validates URL for security before downloading.
@@ -349,7 +373,7 @@ export async function loadImageAsBuffer(imagePath) {
  * const imageBuffer = await downloadImageAsBuffer('https://example.com/image.jpg');
  */
 export async function downloadImageAsBuffer(imageUrl) {
-    logger.debug(`Downloading image from URL: ${imageUrl}`);
+    logger.debug(`Downloading image from URL: ${describeUrlForLog(imageUrl)}`);
     // validateImageUrl runs on the URL and on every redirect target (up to 5).
     const response = await fetchFollowingRedirects(imageUrl, {
         validate: validateImageUrl,
@@ -560,6 +584,6 @@ export function buildFormData(params) {
  * @param level - Log level (debug, info, warn, error)
  */
 export function setLogLevel(level) {
-    logger.level = level.toLowerCase();
+    logger.level = normalizeLogLevel(level);
 }
 //# sourceMappingURL=utils.js.map

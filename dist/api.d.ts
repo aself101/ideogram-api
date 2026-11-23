@@ -18,8 +18,10 @@
  * - minimaxH3TextToVideo / ImageToVideo / ReferenceToVideo
  * - seedance25TextToVideo / ImageToVideo / ReferenceToVideo
  * - getGeneration / waitForGeneration retrieve every async result
- * Every v2 method accepts `dryRun: true`, which prices the request without
- * running or billing it and resolves to a PriceQuote.
+ * Every v2 method accepts `dryRun: true`, which asks Ideogram to price the
+ * request instead of running it and resolves to a PriceQuote. The library checks
+ * that a price quote came back; if the API ran the request instead, it throws
+ * EDRYRUNIGNORED (possiblyBilled true) with the result on `error.result`.
  *
  * The v3 operations and the v2 image default (`async` unset) are synchronous.
  */
@@ -27,8 +29,27 @@ import type { GenerateV4Params, GenerateV4TransparentParams, GenerateV4CustomPar
 /**
  * Said once for a failed request that may have run and been charged. Messages
  * that carry it end with it exactly, so the CLI can tell it was already said.
+ *
+ * A stable exported constant: the exact trailing sentence of every
+ * possibly-billed message, so a caller can test `error.message.endsWith(BILLING_NOTE)`.
+ * Changing the wording is a breaking change.
  */
 export declare const BILLING_NOTE = "The request may have run and been billed. Check your usage before retrying.";
+/**
+ * Whether polling the same generation again can still succeed after a failure.
+ * An allowlist of permanent failures: HTTP 400, 404, 410, 422; 401 and 403 (the
+ * same client cannot recover with a rejected key; fix the key and start a new
+ * call); a response too large (code ERESPONSETOOLARGE); a generation that
+ * finished as failed. Everything else is resumable: no response, timeout, 5xx,
+ * 408, 425, 429, 402, any other 4xx, the wait deadline, an onPoll throw.
+ */
+export declare function classifyPollFailure(failure: {
+    status?: number;
+    code?: string;
+    generationStatus?: string;
+}): {
+    resumable: boolean;
+};
 /**
  * Error thrown for a failed Ideogram API request.
  * Extends Error, so existing `catch (e) { e.message }` code keeps working.
@@ -47,7 +68,7 @@ export declare class IdeogramAPIError extends Error {
     /**
      * A client-side classification of the failure: a network error code when no
      * response arrived ('ECONNRESET', 'ETIMEDOUT', ...), or 'ERESPONSETOOLARGE' /
-     * 'EDRYRUNIGNORED' (and a network code from a failed body read) when a
+     * 'EDRYRUNIGNORED' / 'EINVALIDARGUMENT' (waitForGeneration argument checks; and a network code from a failed body read) when a
      * response did arrive. Not an HTTP status; see `status` for that.
      */
     readonly code?: string;
@@ -64,10 +85,14 @@ export declare class IdeogramAPIError extends Error {
     readonly possiblyBilled: boolean;
     /**
      * True when calling getGeneration or waitForGeneration again with
-     * `generationId` can still succeed: a network or timeout failure with no
-     * response, a 5xx, the wait deadline, an onPoll callback that threw, and
-     * 401/403 (after fixing the API key). False (the default) for a generation
-     * that finished as failed, and for a 4xx the API will repeat (404, 400, ...).
+     * `generationId` can still succeed. Everything that fails while polling is
+     * resumable (no response or timeout, 5xx, 408, 425, 429, 402, any other 4xx,
+     * the wait deadline, an onPoll callback that threw) except a permanent
+     * failure: HTTP 400, 404, 410, 422, a response too large (code
+     * ERESPONSETOOLARGE), a generation that finished as failed, and 401/403 (the
+     * same client cannot recover with a rejected key: fix the key and start a
+     * new call; the CLI prints that hint from the status). False (the default)
+     * outside polling. See `classifyPollFailure`.
      */
     readonly resumable: boolean;
     /** The generation this error concerns (polling, or a dry run that was really run). */
@@ -112,10 +137,11 @@ export declare class IdeogramAPI {
      *
      * @param apiKey - Ideogram API key
      * @param baseUrl - Base API URL (default: https://api.ideogram.ai)
-     * @param logLevel - Logging level (debug, info, warn, error). Defaults to the
+     * @param logLevel - Logging level (debug, info, warn, error; case-insensitive,
+     *   anything else throws). Defaults to the
      *   module logger's level: 'warn', or whatever `setLogLevel` from
      *   `ideogram-api/utils` last set. Logs go to stderr.
-     * @throws Error if API key is not provided or base URL is not HTTPS
+     * @throws Error if API key is not provided, base URL is not HTTPS or the log level is unknown
      *
      * @example
      * const api = new IdeogramAPI('your_api_key');
@@ -471,7 +497,8 @@ export declare class IdeogramAPI {
     minimaxH3ReferenceToVideo(params: MinimaxH3ReferenceToVideoParams): Promise<V2Acknowledgement | PriceQuote>;
     /**
      * Text to video with Seedance 2.5 (JSON), up to 1080p and 30 seconds.
-     * `generateAudio` roughly doubles the cost; price it first with `dryRun`.
+     * `generateAudio`: Ideogram's docs say audio roughly doubles the cost; at 480p / 4 s it did not
+     * change the quote or the bill (2026-11-22). Run `dryRun` to see the price.
      *
      * @example
      * const quote = await api.seedance25TextToVideo({ prompt: 'A red fox in snow', resolution: '1080p', dryRun: true });
@@ -535,7 +562,9 @@ export declare class IdeogramAPI {
      * @param generationId - The generation_id returned by a v2 request
      * @param options - Poll interval, overall timeout, per-poll callback
      * @returns The completed GenerationStatus (with `data`)
-     * @throws Error if `intervalMs` or `timeoutMs` is not an integer from 1 to 2147483647
+     * @throws IdeogramAPIError with code 'EINVALIDARGUMENT' (not resumable, not
+     *   billed) if `generationId` is empty or `intervalMs` / `timeoutMs` is not an
+     *   integer from 1 to 2147483647
      * @throws IdeogramAPIError with `failureReason` if the generation failed,
      *   or on timeout (the generation keeps running server-side)
      *
@@ -550,7 +579,8 @@ export declare class IdeogramAPI {
      * `setLogLevel` from `ideogram-api/utils` controls (file loading, DNS and
      * download checks); that one only sets the default for instances created later.
      *
-     * @param level - Log level (debug, info, warn, error)
+     * @param level - Log level (debug, info, warn, error; case-insensitive)
+     * @throws Error if the level is unknown
      *
      * @example
      * api.setLogLevel('debug');

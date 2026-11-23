@@ -6,10 +6,11 @@
 import path from 'path';
 import fs from 'fs/promises';
 import { IdeogramAPI, IdeogramAPIError, isPriceQuote, BILLING_NOTE } from './api.js';
+import { sanitizeServerText } from './http.js';
 import { discardFile, MAX_TIMER_MS } from './http.js';
 import { getIdeogramApiKey, V2_LIMITS, validateV2Params, assertColorPalette, parseContextWindow, preciseEditBounds, } from './config.js';
 import { saveImage, saveMetadata, generateFilename, ensureDirectory, createSpinner, claimPath, } from './cli-io.js';
-import { setLogLevel, downloadBuffer, downloadToFile, getImageDimensions, toError, } from './utils.js';
+import { setLogLevel, downloadBuffer, downloadToFile, getImageDimensions, validateImagePath, toError, } from './utils.js';
 /**
  * Message for a failed command. Network errors can arrive with a bare
  * message ("fetch failed", "Error") and the real reason on `cause`, so append
@@ -24,7 +25,7 @@ export function describeError(err) {
     }
     const rawCode = err.code ?? cause?.code;
     const code = typeof rawCode === 'string' && rawCode && !message.includes(rawCode) ? ` [${rawCode}]` : '';
-    return `${message}${code}`;
+    return sanitizeServerText(`${message}${code}`);
 }
 /**
  * The command that retrieves a generation. IDs are URL-safe base64, so about
@@ -41,25 +42,38 @@ export function getGenerationCommand(generationId) {
         : `ideogram get-generation ${generationId} --wait`;
 }
 /**
- * Print a failed command's error, and for a resumable failure (`resumable`)
- * the command that picks the generation up, or for any other error that may
- * have been billed (possiblyBilled) the billing note. A generation that was
- * submitted keeps running (and stays billed) after a transient polling failure.
- * A generation the API reported as failed, or a 404, has nothing to resume.
+ * Whether the CLI adds the billing line after an error. Only for an error that
+ * may have been billed (`possiblyBilled`) and whose message does not already end
+ * with BILLING_NOTE. Not for a non-resumable polling error (one carrying a
+ * generationId) with status 400, 404, 410 or 422: the id was never seen to be
+ * submitted by this call, so the line would claim a charge nothing shows.
+ */
+export function shouldAppendBillingNote(err) {
+    if (err.possiblyBilled !== true || (err.message ?? '').endsWith(BILLING_NOTE))
+        return false;
+    const neverSeenSubmitted = err.resumable !== true &&
+        typeof err.generationId === 'string' &&
+        (err.status === 400 || err.status === 404 || err.status === 410 || err.status === 422);
+    return !neverSeenSubmitted;
+}
+/**
+ * Print a failed command's error, and for a polling failure that carries a
+ * generation id the hint to pick it up: with the key hint for a 401/403 (chosen
+ * from the status, whatever `resumable` says), the plain resume command for a
+ * resumable failure. Otherwise the billing note when shouldAppendBillingNote
+ * says so. A generation the API reported as failed, or a 404, has nothing to resume.
  */
 export function reportCommandError(err) {
     const described = describeError(err);
     console.error(`\n✗ Error: ${described}\n`);
-    if (err.resumable === true && typeof err.generationId === 'string' && err.generationId !== '') {
-        const command = getGenerationCommand(err.generationId);
-        if (err.status === 401 || err.status === 403) {
-            console.error(`  The generation may still complete. Fix the API key, then resume with: ${command}\n`);
-        }
-        else {
-            console.error(`  The generation may still complete. Resume with: ${command}\n`);
-        }
+    const hasId = typeof err.generationId === 'string' && err.generationId !== '';
+    if (hasId && (err.status === 401 || err.status === 403)) {
+        console.error(`  The generation may still complete. Fix the API key, then resume with: ${getGenerationCommand(err.generationId)}\n`);
     }
-    else if (err.possiblyBilled === true && !(err.message ?? '').endsWith(BILLING_NOTE)) {
+    else if (hasId && err.resumable === true) {
+        console.error(`  The generation may still complete. Resume with: ${getGenerationCommand(err.generationId)}\n`);
+    }
+    else if (shouldAppendBillingNote(err)) {
         console.error(`  ${BILLING_NOTE}\n`);
     }
 }
@@ -151,6 +165,14 @@ async function statInput(file, kind) {
     }
 }
 /**
+ * Dimensions of a local image, after the magic-byte check, so a file that is not
+ * an image says so instead of failing inside the dimension reader.
+ */
+async function imageDimensionsOf(file) {
+    await validateImagePath(file);
+    return getImageDimensions(file);
+}
+/**
  * Check local files against the documented v2 limits before uploading:
  * per-file size, mask dimensions, pixel caps, source aspect ratio, and an
  * explicit context window lying inside the image.
@@ -180,7 +202,7 @@ async function preflightV2Images(operation, options) {
     }
     if (operation === 'upscale-auto' && options.image) {
         const factor = Number((options.upscaleFactor ?? 'x2').replace(/^x/, ''));
-        const { width, height } = await getImageDimensions(options.image);
+        const { width, height } = await imageDimensionsOf(options.image);
         if (Number.isFinite(factor) && Math.max(width, height) * factor > L.upscale.maxOutputSide) {
             throw new Error(`${width}x${height} upscaled x${factor} is ${width * factor}x${height * factor}; the output may not exceed ${L.upscale.maxOutputSide}px per side`);
         }
@@ -193,9 +215,9 @@ async function preflightV2Images(operation, options) {
     const primary = options.image || options.images?.[0];
     if (!primary)
         return;
-    const dims = await getImageDimensions(primary);
+    const dims = await imageDimensionsOf(primary);
     if (options.mask) {
-        const maskDims = await getImageDimensions(options.mask);
+        const maskDims = await imageDimensionsOf(options.mask);
         if (maskDims.width !== dims.width || maskDims.height !== dims.height) {
             throw new Error(`Mask is ${maskDims.width}x${maskDims.height} but the image is ${dims.width}x${dims.height}; they must match`);
         }
@@ -217,7 +239,7 @@ async function preflightV2Images(operation, options) {
     }
     if (isV4x) {
         for (const file of options.images || []) {
-            const d = file === primary ? dims : await getImageDimensions(file);
+            const d = file === primary ? dims : await imageDimensionsOf(file);
             if (Math.max(d.width / d.height, d.height / d.width) > L.maxAspect) {
                 throw new Error(`${file} is ${d.width}x${d.height}; source aspect ratios must be between 1:6 and 6:1`);
             }
@@ -690,7 +712,7 @@ export async function executeGetGeneration(generationId, options, globalOptions)
             : await api.getGeneration(generationId);
         console.log(`\nGeneration ${status.generation_id}: ${status.status} (created ${status.created})`);
         if (status.failure_reason)
-            console.log(`Failure reason: ${status.failure_reason}`);
+            console.log(`Failure reason: ${sanitizeServerText(String(status.failure_reason))}`);
         generationFailed = status.status === 'failed';
         if (status.usage_cost_usd_micros !== undefined) {
             console.log(`Usage cost: $${(status.usage_cost_usd_micros / 1e6).toFixed(4)}`);

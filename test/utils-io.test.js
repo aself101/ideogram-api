@@ -59,8 +59,12 @@ describe('toError / isErrnoException', () => {
 describe('createSpinner', () => {
   let writes;
   let stdoutSpy;
+  let ttyDescriptor;
   beforeEach(() => {
     vi.useFakeTimers();
+    // Frames are written only on a TTY; these tests are about the frames.
+    ttyDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
     writes = [];
     stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((s) => {
       writes.push(String(s));
@@ -71,6 +75,8 @@ describe('createSpinner', () => {
     vi.useRealTimers();
     // Not vi.restoreAllMocks(): that would also restore the shared AbortSignal.timeout spy.
     stdoutSpy.mockRestore();
+    if (ttyDescriptor) Object.defineProperty(process.stdout, 'isTTY', ttyDescriptor);
+    else delete process.stdout.isTTY;
   });
 
   it('writes nothing until started, then a frame every 80ms with the message', () => {

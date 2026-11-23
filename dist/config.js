@@ -408,8 +408,8 @@ export function assertColorPalette(palette) {
         }
     }
 }
-/** Every v2 operation key, for rejecting an unknown one by name. */
-const V2_OPERATION_KEYS = [
+/** Every v2 operation key, for rejecting an unknown one by name. `V2OperationKey` is derived from it. */
+export const V2_OPERATION_KEYS = [
     'generate-v4',
     'generate-v4-transparent',
     'generate-v4-custom',

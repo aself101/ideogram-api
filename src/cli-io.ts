@@ -225,7 +225,9 @@ export function pause(ms: number): Promise<void> {
 
 /**
  * Create a spinner for long-running operations.
- * Returns an object with start(), stop(), and update() methods.
+ * Returns an object with start(), stop(), and update() methods. Frames are
+ * written only when stdout is a TTY; otherwise nothing is written until stop(),
+ * which prints the final message once (so a log or pipe gets no frame noise).
  *
  * @param message - Message to display with spinner
  * @returns Spinner object with start(), stop(), and update() methods
@@ -244,6 +246,7 @@ export function createSpinner(message: string): SpinnerObject {
 
   return {
     start() {
+      if (!process.stdout.isTTY) return;
       process.stdout.write('\n');
       interval = setInterval(() => {
         const frame = frames[frameIndex];
@@ -256,6 +259,10 @@ export function createSpinner(message: string): SpinnerObject {
       if (interval) {
         clearInterval(interval);
         interval = null;
+      }
+      if (!process.stdout.isTTY) {
+        if (finalMessage) process.stdout.write(`${finalMessage}\n`);
+        return;
       }
       process.stdout.write('\r');
       if (finalMessage) {

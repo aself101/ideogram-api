@@ -8,7 +8,9 @@ Contributions are welcome. Follow the existing code patterns and include tests f
 4. Run `npm run verify`
 5. Submit a pull request
 
-Commit messages drive releases: `CHANGELOG.md` is generated from them by semantic-release.
+## Commits and releases
+
+Commit messages drive releases: semantic-release cuts each version from conventional commits and generates `CHANGELOG.md`. `feat:` makes a minor release and `fix:` a patch. A `BREAKING CHANGE:` footer makes a major release. The footer must say what broke and what a user does instead (the removed or changed name, the new behaviour, the migration), because its text becomes the release note. Never squash-merge commits that carry footers: the squash drops or merges the footers and the major bump with them. Merge them as they are.
 
 ## Testing
 

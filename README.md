@@ -5,7 +5,7 @@
 [![Node.js Version](https://img.shields.io/node/v/ideogram-api)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg)](https://www.typescriptlang.org/)
 
-A Node.js library and command-line tool (`ideogram`) for the [Ideogram API](https://ideogram.ai/api): image generation, editing and manipulation with Ideogram 3.0 (v1 API), Ideogram 4.0 / 4.5 / 4.6, automatic model selection and upscaling (v2 API), SVG generation with Ideogram Vector 1, and video with MiniMax H3 and Seedance 2.5. Requires Node.js 22 or later. The package is ESM-only: `import` it; `require('ideogram-api')` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`. HTTP goes through Node's built-in `fetch`.
+A Node.js library and command-line tool (`ideogram`) for the [Ideogram API](https://ideogram.ai/api): image generation, editing, description and manipulation with Ideogram 3.0 (v1 API), Ideogram 4.0 / 4.5 / 4.6, automatic model selection and upscaling (v2 API), SVG generation with Ideogram Vector 1, and video with MiniMax H3 and Seedance 2.5. Requires Node.js 22 or later. The package is ESM-only: `import` it; `require('ideogram-api')` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`. HTTP goes through Node's built-in `fetch`.
 
 The Ideogram API is paid and every real call is billed. Read [Before you spend](#before-you-spend) first.
 
@@ -33,7 +33,7 @@ npm install -g ideogram-api
 export IDEOGRAM_API_KEY="your-api-key"
 ```
 
-Price a request first. A dry run is priced, not run, and bills nothing:
+Price a request first (a dry run, see [Dry runs and prices](#dry-runs-and-prices)):
 
 ```bash
 ideogram generate-v46 --prompt "A serene mountain landscape" --quality low --dry-run
@@ -63,17 +63,10 @@ Ideogram 3.0 (`generate`, `edit`, `remix`, ...) is on the older v1 API and has n
 
 ## Before you spend
 
-- **Dry runs are priced, not run.** Every v2 method and command takes `dryRun: true` / `--dry-run`. The Ideogram 3.0 operations do not. See [Dry runs and prices](#dry-runs-and-prices).
+- **Dry runs are priced, not run.** Every v2 method and command takes `dryRun: true` / `--dry-run`; the Ideogram 3.0 operations do not. See [Dry runs and prices](#dry-runs-and-prices).
 - **A request that fails after it was sent may still have been billed.** See [Errors](#errors) for how to resume or check usage instead of resubmitting.
 - **Quote each CLI prompt.** On v1 `generate`, `--prompt` takes one or more values: `--prompt "a red fox" "a blue owl"` makes two paid generations, while an unquoted `--prompt a red fox` would make three. Several single-word prompts are therefore refused as a likely unquoted prompt unless you pass `--allow-single-word-prompts`. Every command rejects excess arguments (exit 1, nothing sent); `ideogram generate-v46 -p A fox runs` used to send, and bill, the prompt "A".
-- **CLI disk and billing guarantees.**
-  - Before writing anything to disk, the CLI prints the generation id and every result URL, so a disk error cannot lose a billed result.
-  - Every command writes the metadata file (generation id and every URL where there is one) before downloading, so a failed download keeps the record. Metadata files are written atomically (temp file, then rename), so a failed write such as a full disk leaves the previous record intact.
-  - Output files never overwrite each other: each item gets its own name (the index survives truncation of long prompts), and an existing file is never replaced.
-  - A request that returns zero results prints the generation id, writes the metadata file, reports an error and exits 1.
-  - A `--dry-run` that comes back with a real result is reported loudly and saved, and the command exits non-zero. One answered with neither results nor a generation id is saved to a metadata file and reported (exit 1).
-  - If every file was saved and only the final metadata rewrite fails, the CLI says the result was generated, lists the saved files, says the metadata file still holds the earlier record and that nothing needs retrying, and exits 1.
-  - If the CLI cannot remove a partial or empty output file after a failed write, it warns and names the file. `describe` removes its placeholder file when the metadata write fails.
+- **Where results go.** The CLI prints the generation id and result URLs before it writes anything to disk, then writes a metadata file (atomically) before downloading, so a failed download or write keeps the record. Result URLs are temporary (Ideogram serves them from an ephemeral path), so download promptly; `get-generation <id>` can fetch a v2 result again by id. Output files never overwrite each other. A request that returns zero results, or a `--dry-run` that returns a real result, is reported and exits non-zero; the id and metadata are kept.
 
 ## Ideogram 4.x, SVG and Video (v2 API)
 
@@ -143,6 +136,7 @@ ideogram generate-v46 --prompt "A lighthouse at dawn" --quality low --size auto_
 ideogram generate-auto --prompt "A product photo of a ceramic mug" --aspect-ratio 16x9 --style-type realistic
 ideogram precise-edit-v46 --prompt "Make the sky stormy" --image ./lighthouse.png --mask ./sky_mask.png
 ideogram generate-svg --prompt "A minimal fox logo" --no-gradient --wait
+ideogram seedance-text-to-video --prompt "A red fox in snow" --resolution 720p --duration 4 --dry-run
 ```
 
 ### Upscale
@@ -164,7 +158,7 @@ It returns an `UpscaleResponse` (`generation_id`, `seed`, `width`, `height`, and
 
 ### Dry runs and prices
 
-A dry run asks Ideogram to price the request without running it. The result is a `PriceQuote`. The library checks that a quote came back: if Ideogram returns a real result instead, it throws `IdeogramAPIError` with `code: 'EDRYRUNIGNORED'` and `possiblyBilled: true`, plus `generationId` when present and the returned response as `error.result`, so nothing paid for is lost. This was verified live on 2026-11-22 for every endpoint except generate-custom, which was not priced.
+A dry run asks Ideogram to price the request instead of running it. The result is a `PriceQuote`. Dry runs were verified live on 2026-11-22 on every endpoint except generate-custom, which was not priced. The library checks that a quote came back: if Ideogram returns a real result instead, it throws `IdeogramAPIError` with `code: 'EDRYRUNIGNORED'` and `possiblyBilled: true`, plus `generationId` when present and the returned response as `error.result`, so nothing paid for is lost.
 
 ```typescript
 import { IdeogramAPI, isPriceQuote } from 'ideogram-api';
@@ -190,7 +184,7 @@ Video is priced per second of output and per resolution tier, and is far more ex
 Two things the quotes showed that Ideogram's docs do not say:
 
 - **An omitted Seedance `duration` is quoted at the maximum** for image and reference to video (30 s: the $6.93 row), but at about 5 s for text to video. Set `duration` when cost matters.
-- **`generateAudio` did not change the quote or the bill** at 480p / 4 s, although Ideogram's API docs say audio "roughly doubles the provider cost". The returned video did carry an audio track.
+- **`generateAudio` did not change the quote or the bill** at 480p / 4 s, although Ideogram's API docs say audio "roughly doubles the provider cost" (the CLI help gives both). The returned video did carry an audio track.
 
 ### Sync, async and always-async
 
@@ -229,20 +223,27 @@ Every failure after a request was sent throws `IdeogramAPIError` (a subclass of 
 | `failureReason` | From `waitForGeneration`: why an async generation failed (e.g. `content_policy_violation`). |
 | `generationStatus` | From `waitForGeneration`: `'failed'` when the API reported the generation as failed, even if it sent no `failureReason`. |
 | `code` | A client-side classification: a network error code when no response arrived (`ECONNRESET`, `ETIMEDOUT` for a timeout, ...), or `ERESPONSETOOLARGE` / `EDRYRUNIGNORED`. |
-| `possiblyBilled` | `true` when the request, or the generation this error concerns, may have been charged. Every `waitForGeneration` error has it `true`, because the generation was already submitted. |
-| `generationId` | Set on every `waitForGeneration` error. Resume with it; never resubmit. |
-| `resumable` | `true` when calling `getGeneration` / `waitForGeneration` again with `generationId` can still succeed: no response (network error or timeout), 5xx, the wait deadline expiring ("Timed out after ..."), a throwing `onPoll` callback (rethrown with `generationId` and the callback's error as `cause`), and 401/403 once the key is fixed. `false` for a failed generation, and for 404, 400 and other non-429 4xx during polling. |
+| `possiblyBilled` | `true` when the request, or the generation this error concerns, may have been charged. Every `waitForGeneration` error has it `true`, because the generation was already submitted; a direct `getGeneration` failure has it `false`. |
+| `generationId` | Set on `waitForGeneration` and `getGeneration` errors. Resume with it; never resubmit. |
+| `resumable` | `true` when calling `getGeneration` / `waitForGeneration` again with `generationId` can still succeed: no response, timeouts, 5xx, 408, 425, 402, the wait deadline ("Timed out after ..."), and a throwing `onPoll` callback (rethrown with the callback's error as `cause`). `false` for HTTP 400, 404, 410 and 422, a response too large (`ERESPONSETOOLARGE`) and a failed generation. 401/403 are `false` too: fix the key first, then resume. |
 | `result` | With `EDRYRUNIGNORED`: the response the API returned instead of a quote. |
 
+`waitForGeneration` argument errors (empty id, bad `intervalMs` / `timeoutMs`) throw `IdeogramAPIError` with `code: 'EINVALIDARGUMENT'`: not billed, not resumable. Its `onPoll` option (`WaitForGenerationOptions`) is called with each polled `GenerationStatus`. `BILLING_NOTE` is exported: the exact closing sentence of a possibly-billed message ("The request may have run and been billed. Check your usage before retrying."). Server-supplied text (error message, `failure_reason`, `reject_reason`) is stripped of control characters before it reaches messages, logs or CLI output; `error.body` keeps the raw response.
+
 ```typescript
-import { IdeogramAPIError } from 'ideogram-api';
+import { IdeogramAPI, IdeogramAPIError } from 'ideogram-api';
+
+const api = new IdeogramAPI(process.env.IDEOGRAM_API_KEY!);
+const id = 'generation id from an earlier async request';
 
 try {
   await api.waitForGeneration(id);
 } catch (e) {
   if (!(e instanceof IdeogramAPIError)) throw e;
-  if (e.resumable) {
-    // resume: api.waitForGeneration(e.generationId!)
+  if (e.resumable && e.generationId) {
+    // resume: api.waitForGeneration(e.generationId)
+  } else if (e.status === 401 || e.status === 403) {
+    // fix the key, then resume with the same id
   } else if (e.possiblyBilled) {
     // check your usage before retrying
   } else {
@@ -253,9 +254,7 @@ try {
 
 Common statuses: 400 invalid parameters; 401 invalid API key; 402 (v2) out of credits or quota, see `rejectReason`; 403 no access to this model (e.g. a custom model you do not own); 404 unknown generation id or missing asset; 422 validation failed, or (v2) a rule such as `style_type` with source images; 429 rate limit exceeded (on v2, `rejectReason` says which limit); 5xx Ideogram-side error.
 
-On the CLI, a failed command prints the error, then the resume command (`ideogram get-generation <id> --wait`, or `ideogram get-generation --wait -- <id>` when the id starts with `-`) when the error is `resumable`, or otherwise "This request may have run and been billed. Check your usage before retrying." when it is `possiblyBilled`. `get-generation <id>` exits 1 when the generation failed, with or without `--wait`.
-
-**A request with no response may still have been billed.** On 2026-11-22 one `generate-auto` request failed client-side with no response and was charged all the same.
+**A request with no response may still have been billed.** On 2026-11-22 one `generate-auto` request failed client-side with no response and was charged all the same. On the CLI, a failed command prints the error, then the resume command (`ideogram get-generation <id> --wait`, or `ideogram get-generation --wait -- <id>` when the id starts with `-`) when the error is `resumable`; for 401/403 it says "Fix the API key, then resume with: ..." instead. Otherwise it prints `BILLING_NOTE` when the error is `possiblyBilled`. A mistyped id (404, 400, 410, 422 while polling) gets no billing note, though the 404 message says a submitted generation may still have been billed. `get-generation <id>` exits 1 when the generation failed, with or without `--wait`.
 
 Timeouts and poll intervals (`timeoutMs`, `intervalMs`; CLI `--timeout`, `--poll-interval`, `--wait-timeout`) must be whole milliseconds from 1 to 2147483647; out-of-range values are rejected before any request is sent. `waitForGeneration`'s 429 backoff doubles the interval, at least 1 s and at most 30 s, and never polls sooner than the current interval.
 
@@ -276,7 +275,7 @@ From source: `git clone https://github.com/aself101/ideogram-api.git && cd ideog
 
 **Authentication.** The CLI looks for the key in this order:
 
-1. `--api-key YOUR_KEY` (`ideogram --api-key YOUR_KEY generate --prompt "landscape"`)
+1. `--api-key YOUR_KEY` (`ideogram --api-key YOUR_KEY generate --prompt "landscape"`). The key is visible in the process list and your shell history, so prefer `IDEOGRAM_API_KEY` or a `.env` file.
 2. `IDEOGRAM_API_KEY` in the environment
 3. `IDEOGRAM_API_KEY` in a `.env` file in the current directory
 4. `IDEOGRAM_API_KEY` in `~/.ideogram/.env` (for global installs): `mkdir -p ~/.ideogram && echo "IDEOGRAM_API_KEY=your_api_key" > ~/.ideogram/.env`
@@ -376,7 +375,7 @@ ideogram --examples         # usage examples
 ideogram <command> --help   # every option a command takes
 ```
 
-Global options (before the command): `--api-key <key>`, `-o, --output-dir <path>` (default `datasets/ideogram`), `--log-level <level>` (`debug`, `info`, `warn`, `error`; default `info`), `--examples`, `--version` (prints `unknown` if it cannot read its package.json).
+Global options (before the command): `--api-key <key>`, `-o, --output-dir <path>` (default `datasets/ideogram`), `--log-level <level>` (`debug`, `info`, `warn`, `error`, case-insensitive; an unknown level is an error; default `info`), `--examples`, `--version` (prints `unknown` if it cannot read its package.json).
 
 **Commands.** The six [3.0 commands](#ideogram-30-operations-v1-api) (`generate`, `edit`, `remix`, `reframe`, `replace-background`, `describe`); the [v2 commands](#ideogram-4x-svg-and-video-v2-api) (including `upscale` and `get-generation`); and the [helper commands](#helper-commands). Help text names the model for unversioned commands: `precise-edit` is Ideogram 4.5, `generate-transparent` and `generate-custom` are 4.0, `minimax-*` is MiniMax H3 and `seedance-*` is Seedance 2.5.
 
@@ -510,7 +509,7 @@ The package exports `ideogram-api` (and its alias `ideogram-api/api`), `ideogram
 - `extractDescriptions(response)`: the strings from a `describe` response.
 - `isPriceQuote(result)`: tells a dry-run quote from a result.
 
-**Logging.** The library logs at `warn` by default, to stderr, so your stdout stays clean. `api.setLogLevel(level)` and the constructor's `logLevel` set that instance. `setLogLevel` from `ideogram-api/utils` sets the module logger used by the utils helpers. The CLI's `--log-level` is separate (default `info`, CLI output on stdout) and sets both.
+**Logging.** The library logs at `warn` by default, to stderr, so your stdout stays clean. Handled API errors are logged at `ERROR` on stderr even when you also catch them; `error` is the minimum level and there is no `silent` option, so redirect stderr (`2>/dev/null`) to hide them. `api.setLogLevel(level)` and the constructor's `logLevel` (`debug`, `info`, `warn`, `error`, case-insensitive; an unknown level is an error) set that instance. `setLogLevel` from `ideogram-api/utils` sets the module logger used by the utils helpers, and also rejects an unknown level. The CLI's `--log-level` is separate (default `info`, CLI output on stdout) and sets both.
 
 ### `ideogram-api/config`
 
@@ -632,7 +631,7 @@ A blocked URL throws an error such as `Access to internal/private IP addresses i
 - **Option constants are literal tuples** (`as const`) rather than `string[]`.
 - **`IdeogramApiOptions` is removed.** The type was exported but nothing accepted it. The constructor is `new IdeogramAPI(apiKey, baseUrl?, logLevel?)`.
 - **The library logs at `warn` by default, to stderr** (it logged at `info`). Pass a `logLevel` to see more; see [Logging](#the-main-module).
-- **The CLI's log lines go to stderr.** Results, prices, ids and saved paths stay on stdout, so `ideogram ... > out.txt` captures only those; `--log-level` still defaults to `info`.
+- **The CLI's log lines go to stderr.** Results, prices, ids and saved paths stay on stdout, so `ideogram ... > out.txt` captures only those; `--log-level` still defaults to `info`. The spinner animates only on a terminal, so redirected stdout gets result lines, not spinner frames.
 - **Importing the library no longer loads `.env` files.** Only the `ideogram` CLI reads them, and only `IDEOGRAM_API_KEY` (cwd `.env`, then `~/.ideogram/.env`). `IDEOGRAM_OUTPUT_DIR` or `NODE_ENV` set in a `.env` file no longer take effect: set them in the real environment. Library users must pass the key or set it themselves.
 - **`buildFormData` names and types file parts from their bytes** (`image.png` / `image/png`, `audio.wav` / `audio/wav`); 1.x sent every file as `image.jpg`.
 - **CLI helpers removed from `ideogram-api/utils`:** `saveImage`, `generateFilename`, `ensureDirectory`, `saveMetadata`, `pause`, `createSpinner` and the `logger` re-export. They were CLI plumbing and moved to an internal module. Copy the few lines you need or use Node's `fs` (`fs.mkdir(dir, { recursive: true })`, `fs.writeFile`). `setLogLevel` is still exported.
@@ -651,7 +650,8 @@ A blocked URL throws an error such as `Access to internal/private IP addresses i
 const result = await api.upscale({ image: './photo.jpg', prompt: 'a sharp photo', resemblance: 60, detail: 50, numImages: 1 });
 
 // 2.0
-import { extractImageUrls } from 'ideogram-api';
+import { IdeogramAPI, extractImageUrls } from 'ideogram-api';
+const api = new IdeogramAPI(process.env.IDEOGRAM_API_KEY!);
 const result = await api.upscale({ image: './photo.jpg', upscaleFactor: 'x2' });
 console.log(extractImageUrls(result));
 ```
