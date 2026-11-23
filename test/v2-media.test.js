@@ -132,7 +132,7 @@ describe('Ideogram 4.6', () => {
   it('preciseEditV46 posts to /v2/image/precise-edit/ideogram-4-6 and requires an image', async () => {
     await expect(api.preciseEditV46({ prompt: 'x' })).rejects.toThrow('image is required');
     expect(fetchMock).not.toHaveBeenCalled();
-    fetchMock.mockReturnValue(ok(SYNC_RESPONSE));
+    fetchMock.mockReturnValue(ok(QUOTE));
     await api.preciseEditV46({ prompt: 'hat', image: PNG, contextWindow: 'none', dryRun: true });
     const cfg = sentConfig();
     expect(cfg.url).toBe('https://api.ideogram.ai/v2/image/precise-edit/ideogram-4-6?dry_run=true');

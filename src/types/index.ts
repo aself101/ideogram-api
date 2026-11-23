@@ -4,20 +4,6 @@
  * Comprehensive TypeScript types for the Ideogram API wrapper.
  */
 
-// ==================== API CONFIGURATION TYPES ====================
-
-/**
- * Options for initializing the IdeogramAPI class.
- */
-export interface IdeogramApiOptions {
-  /** Ideogram API key (required) */
-  apiKey: string;
-  /** API base URL (default: https://api.ideogram.ai) */
-  baseUrl?: string;
-  /** Logging level (debug, info, warn, error) */
-  logLevel?: string;
-}
-
 /**
  * Valid rendering speed options.
  */

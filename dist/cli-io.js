@@ -8,8 +8,10 @@
 import dotenv from 'dotenv';
 import fs from 'fs/promises';
 import { readFileSync } from 'fs';
+import { randomBytes } from 'crypto';
 import { homedir } from 'os';
 import path from 'path';
+import { discardFile } from './http.js';
 import { logger } from './logger.js';
 import { isErrnoException, toError } from './utils.js';
 /**
@@ -176,7 +178,17 @@ export async function ensureDirectory(dirPath) {
  */
 export async function saveMetadata(metadataPath, metadata) {
     const jsonContent = JSON.stringify(metadata, null, 2);
-    await fs.writeFile(metadataPath, jsonContent, 'utf8');
+    // Atomic: write a sibling temp file, then rename over the target, so a failed
+    // write leaves the previous content intact (a plain writeFile truncates first).
+    const tempPath = `${metadataPath}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`;
+    try {
+        await fs.writeFile(tempPath, jsonContent, 'utf8');
+        await fs.rename(tempPath, metadataPath);
+    }
+    catch (error) {
+        await discardFile(tempPath, 'the unfinished metadata temp file');
+        throw error;
+    }
     logger.debug(`Saved metadata to: ${metadataPath}`);
     return metadataPath;
 }

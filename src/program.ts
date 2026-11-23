@@ -476,15 +476,18 @@ async function executeOperation<R extends GenerationResponse | DescribeResponse>
     const spinner = createSpinner(spinnerMessage);
     spinner.start();
 
+    // After the call succeeds the work is done (and billed): a later save failure
+    // is reported as such, never as a failed operation that invites a paid retry.
+    let response: R;
     try {
-      const response = await apiMethodCaller(api);
-      spinner.stop(successMessage);
-      await resultHandler(response, globalOptions);
-      console.log('\n✓ Done!\n');
+      response = await apiMethodCaller(api);
     } catch (error) {
       spinner.stop(failureMessage);
       throw error;
     }
+    spinner.stop(successMessage);
+    await resultHandler(response, globalOptions);
+    console.log('\n✓ Done!\n');
   } catch (error) {
     const err = toError(error);
     console.error(`\n✗ Error: ${describeError(err)}\n`);
@@ -1062,8 +1065,9 @@ async function executeGenerate(
       const spinner = createSpinner('Generating images...');
       spinner.start();
 
+      let response: GenerationResponse;
       try {
-        const response = await api.generate({
+        response = await api.generate({
           prompt,
           resolution: options.resolution,
           aspectRatio: options.aspectRatio,
@@ -1088,16 +1092,16 @@ async function executeGenerate(
           stylePreset: options.stylePreset,
         });
 
-        spinner.stop('✓ Generation complete\n');
-
-        await saveResults(response, 'generate-v3', prompt, globalOptions.outputDir, {
-          ...options,
-          prompt: [prompt],
-        });
       } catch (error) {
         spinner.stop('✗ Generation failed\n');
         throw error;
       }
+      // The call succeeded (and was billed): a save failure below is not a failed generation.
+      spinner.stop('✓ Generation complete\n');
+      await saveResults(response, 'generate-v3', prompt, globalOptions.outputDir, {
+        ...options,
+        prompt: [prompt],
+      });
     }
 
     console.log(`\n✓ All done! Processed ${prompts.length} prompt(s)\n`);
@@ -1355,11 +1359,6 @@ async function saveResults(
 ): Promise<void> {
   const images = extractImages(response);
 
-  if (images.length === 0) {
-    console.log('⚠ No images returned');
-    return;
-  }
-
   // The images are already billed. Before anything touches the disk, print every
   // result URL (console.log: --log-level does not silence it), so no disk
   // failure below can lose them. The v1 response carries no generation id.
@@ -1373,15 +1372,18 @@ async function saveResults(
   // cannot lose the URLs of the images not yet fetched. It is rewritten with
   // the saved paths once the downloads finish (same order as saveV2Results).
   const metadataFilename = generateFilename(promptOrName, 'json');
-  let metadataPath: string | undefined;
   const timestamp = response.created || new Date().toISOString();
-  const writeMetadata = (savedPaths: Map<number, string>) =>
-    saveMetadata(metadataPath as string, {
+  const writeMetadata = (target: string, savedPaths: Map<number, string>) =>
+    saveMetadata(target, {
       operation,
       timestamp,
       parameters: options,
       response: {
         imageCount: images.length,
+        // A zero-image result records what the response did carry.
+        ...(images.length === 0
+          ? { responseKeys: typeof response === 'object' && response !== null ? Object.keys(response) : [] }
+          : {}),
         images: images.map((img: ImageData, idx: number) => ({
           index: idx + 1,
           url: img.url,
@@ -1392,18 +1394,28 @@ async function saveResults(
         })),
       },
     });
+  let claimed: string | undefined;
   try {
     await ensureDirectory(outputDir);
-    metadataPath = await claimPath(path.join(outputDir, metadataFilename));
-    await writeMetadata(new Map());
+    claimed = await claimPath(path.join(outputDir, metadataFilename));
+    await writeMetadata(claimed, new Map());
   } catch (error) {
     // The empty placeholder claimPath made would otherwise be left behind.
-    if (metadataPath) await discardFile(metadataPath, 'the unfinished metadata file');
+    if (claimed) await discardFile(claimed, 'the unfinished metadata file');
     console.error(
       `✗ The result was generated (and billed); its URLs are printed above. ` +
         `Nothing could be written under ${outputDir}: ${toError(error).message}`
     );
     throw error;
+  }
+  const metadataPath: string = claimed;
+
+  if (images.length === 0) {
+    console.log(`✓ Saved metadata: ${metadataPath}`);
+    throw new Error(
+      'The API returned no images for a request that may have been billed. ' +
+        `Check your usage before retrying. Details are in ${metadataPath}`
+    );
   }
 
   const savedPaths = new Map<number, string>();
@@ -1432,7 +1444,7 @@ async function saveResults(
     );
     // Make the metadata true for what is on disk: the saved images get their paths.
     try {
-      await writeMetadata(savedPaths);
+      await writeMetadata(metadataPath, savedPaths);
     } catch (metadataError) {
       console.error(
         `✗ Could not update ${metadataPath} with the saved files: ${toError(metadataError).message}. ` +
@@ -1442,7 +1454,7 @@ async function saveResults(
     throw error;
   }
 
-  await writeMetadata(savedPaths);
+  await writeMetadata(metadataPath, savedPaths);
 
   console.log(`✓ Saved metadata: ${metadataPath}`);
   console.log(`✓ Generated ${images.length} image(s) successfully`);

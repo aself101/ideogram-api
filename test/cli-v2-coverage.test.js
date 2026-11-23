@@ -69,7 +69,8 @@ function route({ api, files = {} }) {
     return new Response(files[url]);
   });
 }
-const ack = () => route({ api: () => ({ generation_id: 'gen1', data: [] }) });
+// An accepted (async) answer: no data, so nothing is downloaded. An empty data list is a zero-result error.
+const ack = () => route({ api: () => ({ generation_id: 'gen1' }) });
 
 beforeEach(() => {
   resetHttp();
@@ -120,7 +121,7 @@ describe('executeV2 dispatch: each operation reaches its endpoint', () => {
   });
 
   it('upscale-auto posts to the upscale endpoint and prints the output size', async () => {
-    route({ api: () => ({ generation_id: 'gu', width: 2048, height: 1024, data: [] }) });
+    route({ api: () => ({ generation_id: 'gu', width: 2048, height: 1024 }) });
     await executeV2('upscale-auto', { image: fixture(pngOf(1024, 512)), upscaleFactor: 'x2' }, global());
     expect(exitSpy).not.toHaveBeenCalled();
     expect(apiUrls()).toEqual([ENDPOINTS.UPSCALE_AUTO]);
@@ -441,7 +442,8 @@ describe('executeGetGeneration', () => {
   it('a completed generation without data reports no results', async () => {
     route({ api: () => ({ generation_id: 'gc', status: 'completed', created: 't' }) });
     await executeGetGeneration('gc', {}, global());
-    expect(out()).toContain('⚠ No results returned');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(err()).toContain('returned no results');
   });
 
   it('exits 1 on a non-integer poll interval', async () => {

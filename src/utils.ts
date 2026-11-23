@@ -31,7 +31,9 @@ export function isErrnoException(e: unknown): e is NodeJS.ErrnoException {
 /**
  * Address ranges a download must never reach: loopback, unspecified, private,
  * link-local (cloud metadata), CGNAT, IETF/benchmarking, multicast, reserved
- * (240/4, which includes the broadcast address). IPv4-mapped IPv6 is unwrapped
+ * (240/4, which includes the broadcast address), the documentation ranges, and
+ * the IPv6 transition ranges that embed an IPv4 address (NAT64, 6to4, SIIT,
+ * Teredo). IPv4-mapped IPv6 is unwrapped
  * to IPv4 before this list is consulted (see unwrapMappedIPv4).
  */
 const BLOCKED_ADDRESSES = new BlockList();
@@ -47,6 +49,9 @@ for (const [network, prefix] of [
   ['198.18.0.0', 15], // benchmarking
   ['224.0.0.0', 4], // multicast
   ['240.0.0.0', 4], // reserved, includes 255.255.255.255
+  ['192.0.2.0', 24], // documentation (TEST-NET-1)
+  ['198.51.100.0', 24], // documentation (TEST-NET-2)
+  ['203.0.113.0', 24], // documentation (TEST-NET-3)
 ] as const) {
   BLOCKED_ADDRESSES.addSubnet(network, prefix, 'ipv4');
 }
@@ -55,6 +60,12 @@ for (const [network, prefix] of [
   ['fc00::', 7], // unique local
   ['fe80::', 10], // link-local
   ['ff00::', 8], // multicast
+  ['64:ff9b::', 96], // NAT64: embeds an IPv4 address
+  ['64:ff9b:1::', 48], // local-use NAT64
+  ['2002::', 16], // 6to4: embeds an IPv4 address
+  ['::ffff:0:0:0', 96], // IPv4-translated (SIIT)
+  ['2001::', 32], // Teredo
+  ['2001:db8::', 32], // documentation
 ] as const) {
   BLOCKED_ADDRESSES.addSubnet(network, prefix, 'ipv6');
 }

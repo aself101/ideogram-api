@@ -143,18 +143,6 @@ describe('IdeogramAPI Class', () => {
     });
   });
 
-  describe('Request Building', () => {
-    it('should validate FormData size before sending', () => {
-      // The _makeRequest method should check FormData size
-      expect(typeof api._makeRequest).toBe('function');
-    });
-
-    it('should validate Content-Type in responses', () => {
-      // The _makeRequest method should validate response Content-Type
-      expect(typeof api._makeRequest).toBe('function');
-    });
-  });
-
   describe('Generate Method (Ideogram 3.0)', () => {
     it('should accept minimal parameters', async () => {
       // Test method signature - actual API calls would need mocking
@@ -461,21 +449,6 @@ describe('Security Features', () => {
     });
   });
 
-  describe('FormData Size Validation', () => {
-    it('should have FormData size limit', () => {
-      // The _makeRequest method includes FormData size validation
-      expect(typeof api._makeRequest).toBe('function');
-      // Max size should be 50MB as per security requirements
-    });
-  });
-
-  describe('Content-Type Validation', () => {
-    it('should validate response Content-Type', () => {
-      // The _makeRequest method includes Content-Type validation
-      expect(typeof api._makeRequest).toBe('function');
-      // Should only accept application/json responses
-    });
-  });
 });
 
 describe('Parameter Handling', () => {

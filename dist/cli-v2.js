@@ -5,7 +5,7 @@
  */
 import path from 'path';
 import fs from 'fs/promises';
-import { IdeogramAPI, isPriceQuote } from './api.js';
+import { IdeogramAPI, IdeogramAPIError, isPriceQuote } from './api.js';
 import { discardFile, MAX_TIMER_MS } from './http.js';
 import { getIdeogramApiKey, V2_LIMITS, validateV2Params, assertColorPalette, parseContextWindow, preciseEditBounds, } from './config.js';
 import { saveImage, saveMetadata, generateFilename, ensureDirectory, createSpinner, claimPath, } from './cli-io.js';
@@ -198,10 +198,21 @@ async function preflightV2Images(operation, options) {
 /** Final error of a --dry-run that was answered with a real result. */
 const DRY_RUN_BILLED_ERROR = 'The --dry-run request returned a real result instead of a price quote: it was NOT a dry run and may have been billed. ' +
     'The result was kept (saved or listed above); check your usage.';
-/** Loud warning, printed before the unexpected result is saved. */
-function warnDryRunBilled() {
+/**
+ * Loud warning, printed before the unexpected result is saved or listed.
+ * `hasData`: the response carries results (saved below); otherwise only the
+ * generation id (async, listed below).
+ */
+function warnDryRunBilled(hasData) {
     console.error('\n⚠ WARNING: --dry-run was requested but the API returned a real result, not a price quote.\n' +
-        '  The request may have run and been billed. The result is saved below; check your usage.\n');
+        `  The request may have run and been billed. ${hasData ? 'The result is saved below' : 'The generation id is listed below'}; check your usage.\n`);
+}
+/** The real result a library dry run was answered with (EDRYRUNIGNORED), or undefined for any other error. */
+function dryRunResultFrom(error) {
+    if (error instanceof IdeogramAPIError && error.code === 'EDRYRUNIGNORED' && typeof error.result === 'object' && error.result !== null) {
+        return error.result;
+    }
+    return undefined;
 }
 /** Print a dry-run price quote. */
 function printQuote(quote) {
@@ -283,6 +294,7 @@ export async function executeV2(operation, options, globalOptions) {
         const spinner = createSpinner(options.dryRun ? 'Pricing request...' : 'Generating...');
         spinner.start();
         let result;
+        let dryRunIgnored = false;
         try {
             switch (operation) {
                 case 'upscale-auto':
@@ -373,16 +385,23 @@ export async function executeV2(operation, options, globalOptions) {
             spinner.stop(options.dryRun && isPriceQuote(result) ? '✓ Priced\n' : '✓ Request complete\n');
         }
         catch (error) {
-            spinner.stop('✗ Request failed\n');
-            throw error;
+            // A dry run the API answered with a real result: keep what came back so it is saved or listed.
+            const real = dryRunResultFrom(error);
+            if (!real) {
+                spinner.stop('✗ Request failed\n');
+                throw error;
+            }
+            spinner.stop('⚠ Request ran for real\n');
+            result = real;
+            dryRunIgnored = true;
         }
         if (isPriceQuote(result)) {
             printQuote(result);
             console.log('\n✓ Done!\n');
             return;
         }
-        if (options.dryRun)
-            warnDryRunBilled();
+        if (dryRunIgnored)
+            warnDryRunBilled(Boolean(result.data) || Boolean(options.wait));
         const parameters = { ...options };
         const name = options.prompt ?? 'upscale';
         const generationKind = 'generation_kind' in result ? result.generation_kind : undefined;
@@ -391,6 +410,7 @@ export async function executeV2(operation, options, globalOptions) {
         }
         if (result.data) {
             await saveV2Results(result.data, operation, name, globalOptions.outputDir, {
+                rawResponse: result,
                 generationId: result.generation_id,
                 seed: result.seed,
                 generationKind,
@@ -405,6 +425,7 @@ export async function executeV2(operation, options, globalOptions) {
             if (options.wait) {
                 const done = await waitWithSpinner(api, result.generation_id, pollInterval);
                 await saveV2Results(done.data || [], operation, name, globalOptions.outputDir, {
+                    rawResponse: done,
                     generationId: result.generation_id,
                     seed: result.seed,
                     generationKind,
@@ -416,7 +437,7 @@ export async function executeV2(operation, options, globalOptions) {
                 console.log(`Check on it with: ${getGenerationCommand(result.generation_id)}`);
             }
         }
-        if (options.dryRun)
+        if (dryRunIgnored)
             throw new Error(DRY_RUN_BILLED_ERROR);
         console.log('\n✓ Done!\n');
     }
@@ -453,6 +474,7 @@ export async function executeAsyncV2(operation, options, globalOptions) {
         const spinner = createSpinner(options.dryRun ? 'Pricing request...' : 'Submitting...');
         spinner.start();
         let result;
+        let dryRunIgnored = false;
         try {
             switch (operation) {
                 case 'generate-svg':
@@ -520,16 +542,22 @@ export async function executeAsyncV2(operation, options, globalOptions) {
             spinner.stop(options.dryRun && isPriceQuote(result) ? '✓ Priced\n' : '✓ Submitted\n');
         }
         catch (error) {
-            spinner.stop('✗ Request failed\n');
-            throw error;
+            const real = dryRunResultFrom(error);
+            if (!real) {
+                spinner.stop('✗ Request failed\n');
+                throw error;
+            }
+            spinner.stop('⚠ Request ran for real\n');
+            result = real;
+            dryRunIgnored = true;
         }
         if (isPriceQuote(result)) {
             printQuote(result);
             console.log('\n✓ Done!\n');
             return;
         }
-        if (options.dryRun)
-            warnDryRunBilled();
+        if (dryRunIgnored)
+            warnDryRunBilled(Boolean(options.wait));
         console.log(`Generation accepted: ${result.generation_id}`);
         if (options.webhookUrl) {
             console.log(`Ideogram will POST the result to ${options.webhookUrl}`);
@@ -537,6 +565,7 @@ export async function executeAsyncV2(operation, options, globalOptions) {
         if (options.wait) {
             const done = await waitWithSpinner(api, result.generation_id, pollInterval, waitTimeout);
             await saveV2Results(done.data || [], operation, options.prompt, globalOptions.outputDir, {
+                rawResponse: done,
                 generationId: result.generation_id,
                 usageCostUsdMicros: done.usage_cost_usd_micros,
                 parameters: { ...options },
@@ -545,7 +574,7 @@ export async function executeAsyncV2(operation, options, globalOptions) {
         else {
             console.log(`Check on it with: ${getGenerationCommand(result.generation_id)}`);
         }
-        if (options.dryRun)
+        if (dryRunIgnored)
             throw new Error(DRY_RUN_BILLED_ERROR);
         console.log('\n✓ Done!\n');
     }
@@ -593,6 +622,7 @@ export async function executeGetGeneration(generationId, options, globalOptions)
         }
         if (status.status === 'completed') {
             await saveV2Results(status.data || [], 'generations', generationId, globalOptions.outputDir, {
+                rawResponse: status,
                 generationId,
                 usageCostUsdMicros: status.usage_cost_usd_micros,
                 parameters: { generationId },
@@ -645,14 +675,11 @@ async function discardClaimed(filePath) {
  * to disk; other result kinds are recorded in the metadata only.
  */
 async function saveV2Results(items, operation, promptOrName, baseOutputDir, meta) {
-    if (items.length === 0) {
-        console.log('⚠ No results returned');
-        return;
-    }
     // The generation is already billed. Before anything touches the disk, print
     // its id and every result URL (console.log: --log-level does not silence it),
     // so no disk failure below can lose them.
-    console.log(`Generation id: ${meta.generationId}`);
+    if (meta.generationId)
+        console.log(`Generation id: ${meta.generationId}`);
     items.forEach((raw, i) => {
         const url = raw.url;
         if (url)
@@ -667,8 +694,14 @@ async function saveV2Results(items, operation, promptOrName, baseOutputDir, meta
     // Write the metadata first, with every item's URL, so a failed download
     // cannot lose the generation id or the URLs of the items not yet fetched.
     // It is rewritten with the saved paths once the downloads finish.
-    let metadataPath;
-    const writeMetadata = (saved) => saveMetadata(metadataPath, {
+    const raw = (meta.rawResponse ?? {});
+    const emptyResponse = items.length === 0
+        ? {
+            status: typeof raw.status === 'string' ? raw.status : undefined,
+            responseKeys: typeof meta.rawResponse === 'object' && meta.rawResponse !== null ? Object.keys(meta.rawResponse) : [],
+        }
+        : {};
+    const writeMetadata = (target, saved) => saveMetadata(target, {
         operation,
         timestamp,
         generationId: meta.generationId,
@@ -676,20 +709,27 @@ async function saveV2Results(items, operation, promptOrName, baseOutputDir, meta
         generationKind: meta.generationKind,
         usageCostUsdMicros: meta.usageCostUsdMicros,
         parameters: meta.parameters,
-        response: { itemCount: items.length, items: saved },
+        response: { itemCount: items.length, ...emptyResponse, items: saved },
     });
+    let claimed;
     try {
         await ensureDirectory(outputDir);
-        metadataPath = await claimPath(path.join(outputDir, generateFilename(promptOrName, 'json')));
-        await writeMetadata(pending(0));
+        claimed = await claimPath(path.join(outputDir, generateFilename(promptOrName, 'json')));
+        await writeMetadata(claimed, pending(0));
     }
     catch (error) {
         // The empty placeholder claimPath made would otherwise be left behind.
-        if (metadataPath)
-            await discardFile(metadataPath, 'the unfinished metadata file');
+        if (claimed)
+            await discardFile(claimed, 'the unfinished metadata file');
         console.error(`✗ The result was generated (and billed); its generation id and URLs are printed above. ` +
             `Nothing could be written under ${outputDir}: ${toError(error).message}`);
         throw error;
+    }
+    const metadataPath = claimed;
+    if (items.length === 0) {
+        console.log(`✓ Saved metadata: ${metadataPath}`);
+        throw new Error(`The API returned no results${meta.generationId ? ` for generation ${meta.generationId}` : ''}, ` +
+            `for a request that may have been billed. Check your usage before retrying. Details are in ${metadataPath}`);
     }
     const saved = [];
     try {
@@ -767,7 +807,7 @@ async function saveV2Results(items, operation, promptOrName, baseOutputDir, meta
         // Make the metadata true for what is on disk: the items saved so far with
         // their paths, then the rest (the failed item and any after it) with their URLs.
         try {
-            await writeMetadata([...saved, ...pending(saved.length)]);
+            await writeMetadata(metadataPath, [...saved, ...pending(saved.length)]);
         }
         catch (metadataError) {
             console.error(`✗ Could not update ${metadataPath} with the saved files: ${toError(metadataError).message}. ` +
@@ -775,7 +815,7 @@ async function saveV2Results(items, operation, promptOrName, baseOutputDir, meta
         }
         throw error;
     }
-    await writeMetadata(saved);
+    await writeMetadata(metadataPath, saved);
     console.log(`✓ Saved metadata: ${metadataPath}`);
 }
 //# sourceMappingURL=cli-v2.js.map

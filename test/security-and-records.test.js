@@ -30,7 +30,8 @@ const fsControl = vi.hoisted(() => ({ failSuffix: null, error: null }));
 vi.mock('fs/promises', async (importOriginal) => {
   const actual = await importOriginal();
   const writeFile = async (file, ...rest) => {
-    if (fsControl.failSuffix && String(file).endsWith(fsControl.failSuffix)) throw fsControl.error;
+    // The metadata is written to a temp sibling (`<name>.json.tmp-<pid>-<rand>`) and renamed.
+    if (fsControl.failSuffix && String(file).replace(/\.tmp-[^/\\]*$/, '').endsWith(fsControl.failSuffix)) throw fsControl.error;
     return actual.writeFile(file, ...rest);
   };
   return { ...actual, default: { ...actual.default, writeFile } };

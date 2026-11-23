@@ -119,6 +119,16 @@ describe('readBodyWithLimit / streamToFile', () => {
 describe('fetchFollowingRedirects', () => {
   beforeEach(() => resetHttp());
 
+  it('does not follow a 400 that carries a Location header: one fetch, a non-redirect failure', async () => {
+    fetchMock.mockReturnValue(redirectTo('https://cdn.example.com/elsewhere.png', 400));
+    const validate = vi.fn(async (u) => u);
+    await expect(
+      fetchFollowingRedirects('https://ideogram.ai/a.png', { validate, timeoutMs: 1000 })
+    ).rejects.toThrow('Download failed with status code 400');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(validate).toHaveBeenCalledTimes(1);
+  });
+
   it('runs the SSRF check on every hop, not only the first', async () => {
     fetchMock
       .mockReturnValueOnce(redirectTo('https://cdn.example.com/b.png'))

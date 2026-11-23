@@ -435,7 +435,8 @@ describe('executeGetGeneration', () => {
     await executeGetGeneration('g4', { wait: true, pollInterval: '1' }, global());
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(out()).toContain('Generation g4: completed');
-    expect(out()).toContain('No results returned');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(err()).toContain('returned no results');
   });
 
   it('exits 1 on a bad --poll-interval', async () => {

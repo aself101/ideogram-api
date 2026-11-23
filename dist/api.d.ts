@@ -51,10 +51,18 @@ export declare class IdeogramAPIError extends Error {
      * check usage (or the generation id) before retrying. False for 4xx
      * validation, auth and rate-limit answers, for anything thrown before the
      * request was sent, and for failed status polls (a GET is never billed).
+     * Also true for any error from waitForGeneration, because the generation was
+     * already submitted (and billed): resume with getGeneration or
+     * waitForGeneration using `generationId`, never resubmit.
      */
     readonly possiblyBilled: boolean;
     /** Polling: the generation being waited on, so a failed wait can be resumed. */
     readonly generationId?: string;
+    /**
+     * Code 'EDRYRUNIGNORED': the parsed response the API returned instead of a
+     * price quote, so a caller can still save or list what was billed.
+     */
+    readonly result?: unknown;
     constructor(message: string, details?: {
         status?: number;
         rejectReason?: string;
@@ -64,6 +72,7 @@ export declare class IdeogramAPIError extends Error {
         code?: string;
         possiblyBilled?: boolean;
         generationId?: string;
+        result?: unknown;
         cause?: unknown;
     });
 }
@@ -583,5 +592,5 @@ export declare function isPriceQuote(value: unknown): value is PriceQuote;
  */
 export declare function extractDescriptions(response: DescribeResponse): string[];
 export default IdeogramAPI;
-export type { IdeogramApiOptions, GenerateParams, EditParams, RemixParams, ReframeParams, ReplaceBackgroundParams, UpscaleParams, UpscaleFactor, UpscaleResponse, UpscaledImage, DescribeParams, BaseGenerationParams, GenerationResponse, DescribeResponse, ImageData, Description, RenderingSpeed, MagicPromptOption, StyleType, DescribeModelVersion, ColorPalette, ColorPalettePreset, CustomColorPalette, OpenString, MagicPromptMode, RenderingSpeedV4, QualityV45, BackgroundV45, OutputResolutionTier, AutoResolutionTier, ImageSizeV46, AutoStyleType, V2ColorPalettePreset, V2ColorPalette, ImageInput, AudioInput, AssetType, AssetIdentifier, V2RequestOptions, V2CommonParams, V2DeliveryParams, GenerateV4Params, GenerateV4TransparentParams, GenerateV4CustomParams, GenerateV45Params, GenerateV46Params, GenerateAutoParams, PreciseEditV45Params, PreciseEditV46Params, SvgQuality, GenerateSvgParams, MinimaxH3AspectRatio, MinimaxH3Resolution, MinimaxH3PromptExpansionMode, Seedance25AspectRatio, Seedance25Resolution, VideoBaseParams, MinimaxH3TextToVideoParams, MinimaxH3ImageToVideoParams, MinimaxH3ReferenceToVideoParams, Seedance25TextToVideoParams, Seedance25ImageToVideoParams, Seedance25ReferenceToVideoParams, V2Acknowledgement, GenerationKind, GeneratedImage, V2GenerationResponse, PriceQuote, GenerationStatusValue, GenerationDataItem, VideoGenerationItem, SvgGenerationItem, GenerationStatus, WaitForGenerationOptions, GenerationRejectReason, V2OperationKey, ValidationResult, ValidationParams, OperationConstraint, OperationConstraints, OperationKey, } from './types/index.js';
+export type { GenerateParams, EditParams, RemixParams, ReframeParams, ReplaceBackgroundParams, UpscaleParams, UpscaleFactor, UpscaleResponse, UpscaledImage, DescribeParams, BaseGenerationParams, GenerationResponse, DescribeResponse, ImageData, Description, RenderingSpeed, MagicPromptOption, StyleType, DescribeModelVersion, ColorPalette, ColorPalettePreset, CustomColorPalette, OpenString, MagicPromptMode, RenderingSpeedV4, QualityV45, BackgroundV45, OutputResolutionTier, AutoResolutionTier, ImageSizeV46, AutoStyleType, V2ColorPalettePreset, V2ColorPalette, ImageInput, AudioInput, AssetType, AssetIdentifier, V2RequestOptions, V2CommonParams, V2DeliveryParams, GenerateV4Params, GenerateV4TransparentParams, GenerateV4CustomParams, GenerateV45Params, GenerateV46Params, GenerateAutoParams, PreciseEditV45Params, PreciseEditV46Params, SvgQuality, GenerateSvgParams, MinimaxH3AspectRatio, MinimaxH3Resolution, MinimaxH3PromptExpansionMode, Seedance25AspectRatio, Seedance25Resolution, VideoBaseParams, MinimaxH3TextToVideoParams, MinimaxH3ImageToVideoParams, MinimaxH3ReferenceToVideoParams, Seedance25TextToVideoParams, Seedance25ImageToVideoParams, Seedance25ReferenceToVideoParams, V2Acknowledgement, GenerationKind, GeneratedImage, V2GenerationResponse, PriceQuote, GenerationStatusValue, GenerationDataItem, VideoGenerationItem, SvgGenerationItem, GenerationStatus, WaitForGenerationOptions, GenerationRejectReason, V2OperationKey, ValidationResult, ValidationParams, OperationConstraint, OperationConstraints, OperationKey, } from './types/index.js';
 //# sourceMappingURL=api.d.ts.map

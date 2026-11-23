@@ -159,7 +159,7 @@ describe('v2 request building', () => {
   });
 
   it('generateAuto targets /v2/image/generate/auto and sends no webhook field', async () => {
-    fetchMock.mockReturnValue(ok(SYNC_RESPONSE));
+    fetchMock.mockReturnValue(ok(QUOTE));
     await api.generateAuto({ prompt: 'map', aspectRatio: '16x9', resolutionTier: '2k', dryRun: true });
     const cfg = sentConfig();
     expect(cfg.url).toBe('https://api.ideogram.ai/v2/image/generate/auto?dry_run=true');

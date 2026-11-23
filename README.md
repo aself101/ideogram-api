@@ -62,7 +62,7 @@ if (isPriceQuote(quote)) console.log(`$${quote.usd_micros / 1e6}`);
 - [Migrating from 1.x](#migrating-from-1x)
 - [Authentication Setup](#authentication-setup)
 - [Installation](#installation)
-- [Quick Start](#quick-start)
+- [CLI Tour](#cli-tour)
 - [CLI Usage](#cli-usage)
 - [API Methods](#api-methods)
 - [Examples](#examples)
@@ -81,10 +81,10 @@ The Ideogram API provides access to state-of-the-art image generation and manipu
 - **6 Ideogram 3.0 Operations** - Generate, Edit, Remix, Reframe, Replace Background, Describe
 - **Upscale** - 2x, 4x or 8x through Ideogram's v2 upscaler (since 2.0)
 - **v2 API** - Ideogram 4.0 (plus transparent and custom-model variants), 4.5 and 4.6 generate and precise edit, automatic model selection, SVG generation, and six video endpoints
-- **Dry runs** - Every v2 call accepts `dryRun: true` (`--dry-run`): the request is validated and priced, and nothing is generated or billed
+- **Dry runs** - Every v2 call accepts `dryRun: true` (`--dry-run`): the request is validated and priced, and nothing is generated or billed. The library checks this: see [Dry runs](#dry-runs-price-before-you-spend)
 - **62 Style Presets** - More artistic styles than any other service
 - **Synchronous by default** - Ideogram 3.0 and the v2 image endpoints return results directly; SVG and video return a `generation_id` to poll (`waitForGeneration`, or `--wait` on the CLI)
-- **Production Security** - API key redaction, error sanitization, HTTPS enforcement, comprehensive SSRF protection (including IPv4-mapped IPv6 bypass prevention, checked again on every download redirect)
+- **Production Security** - API key redaction, error sanitization, HTTPS enforcement, comprehensive SSRF protection (including IPv4-mapped IPv6 and NAT64/6to4/Teredo bypass prevention, checked again on every download redirect)
 - **DoS Prevention** - Request timeouts (120s v1 API, 300s v2 API, 60s image downloads), file size limits, redirect limits
 - **DNS Resolution Check** - Refuses hostnames where any resolved address is internal or reserved; the connection is not pinned to the checked address, so DNS rebinding between check and download is not prevented
 - **Parameter Validation** - The CLI validates parameters before API calls; library v2 calls are unvalidated unless you call `validateV2Params`
@@ -261,7 +261,7 @@ ideogram upscale --image ./lighthouse.png --upscale-factor x4
 
 ### Dry runs: price before you spend
 
-Every v2 method takes `dryRun: true` (CLI: `--dry-run`). The request is validated and priced, and nothing is generated, stored or billed. The result is a `PriceQuote`:
+Every v2 method takes `dryRun: true` (CLI: `--dry-run`). The request is validated and priced, and nothing is generated, stored or billed. The result is a `PriceQuote`. If Ideogram returns a real result instead of a quote, the library throws `IdeogramAPIError` with `code: 'EDRYRUNIGNORED'` and `possiblyBilled: true`, plus `generationId` when present and the returned response as `error.result`, so nothing paid for is lost. Dry runs were verified live on 2026-11-22 for every endpoint except generate-custom, which was not priced.
 
 ```typescript
 import { IdeogramAPI, isPriceQuote } from 'ideogram-api';
@@ -291,6 +291,7 @@ Two things the quotes showed that the docs do not say:
 
 ### Synchronous, async and always-async
 
+- **A failed synchronous request cannot be recovered.** If a synchronous request fails after it was sent (timeout, reset, unreadable body) there is no generation id to fetch the result with, and it may still have been billed. For costly or long requests use `async: true` and poll.
 - **v2 image endpoints** return the images by default. Set `async: true` (CLI `--async`) to get a `generation_id` back at once; `waitForGeneration(id)` polls until it completes. `webhookUrl` asks Ideogram to POST the result to you instead.
 - **SVG and video are always asynchronous.** They resolve to `{ generation_id, created? }`. Collect the result with `waitForGeneration`, then `extractSvgUrls` / `extractVideoUrls`. On the CLI, `--wait` polls and downloads (default poll interval 5 s, give-up time 30 minutes; the job keeps running if you stop waiting, and `get-generation <id> --wait` picks it up later).
 
@@ -322,12 +323,17 @@ Failures throw `IdeogramAPIError` (a subclass of `Error`):
 - `rejectReason` / `maxInflightRequests`: why a 402 or 429 was refused (`insufficient_funds`, `inflight_limit`, ...).
 - `failureReason`: from `waitForGeneration`, why an async generation failed (e.g. `content_policy_violation`).
 - `code`: set when **no HTTP response arrived** (e.g. `ECONNRESET`, or `ETIMEDOUT` for a timeout).
-- `possiblyBilled`: `true` when the request was sent and the outcome is unknown or failed after sending (no response, unreadable or malformed body, too-large body, 5xx); `false` for 4xx and anything rejected before sending.
-- `generationId`: set on errors from `waitForGeneration` polling. The CLI prints the resume command (`ideogram get-generation <id> --wait`, or `ideogram get-generation --wait -- <id>` when the id starts with `-`).
+- `possiblyBilled`: `true` when the request was sent and the outcome is unknown or failed after sending (no response, unreadable or malformed body, too-large body, 5xx); `false` for 4xx and anything rejected before sending. It is also `true` for **every** error from `waitForGeneration` (a poll failure, the wait timeout, a failed generation), because the generation was already submitted.
+- `generationId`: set on errors from `waitForGeneration`. Resume polling with `getGeneration(id)` or `waitForGeneration(id)`; never resubmit. The CLI prints the resume command (`ideogram get-generation <id> --wait`, or `ideogram get-generation --wait -- <id>` when the id starts with `-`). An expired wait reports "Timed out after ..." rather than a network error.
 
 ```typescript
-try { await api.generateV46({ prompt: 'A lighthouse', quality: 'low' }); }
-catch (e) { if (e instanceof IdeogramAPIError && e.possiblyBilled) { /* check usage before retrying */ } else { /* safe to fix and retry */ } }
+try { await api.waitForGeneration(id); }
+catch (e) {
+  if (!(e instanceof IdeogramAPIError)) throw e;
+  if (e.generationId) { /* already submitted: resume with api.waitForGeneration(e.generationId) */ }
+  else if (e.possiblyBilled) { /* check usage before retrying */ }
+  else { /* safe to fix and retry */ }
+}
 ```
 
 Every failure after the request was sent is an `IdeogramAPIError`, including a malformed JSON body, a timeout while reading the body, a non-JSON `Content-Type`, and a response body over 100MB; each carries the HTTP `status` where there is one.
@@ -344,6 +350,10 @@ Endpoint paths, limits, option lists and the validators are exported from `ideog
 
 - `ENDPOINTS`: every endpoint path. `UPSCALE_AUTO` (`/v2/image/upscale/auto`) replaced `UPSCALE` in 2.0.
 - `validateV2Params(operation, params)`: checks a v2 request against the documented rules and throws an `Error` naming the first violated one. `operation` is a key such as `'generate-v46'`, `'precise-edit-v46'`, `'upscale-auto'`, `'generate-svg'`, `'minimax-h3-text-to-video'` or `'seedance-2-5-reference-to-video'`.
+- `validateOperationParams(operation, params)`: the v1 (Ideogram 3.0) counterpart of `validateV2Params`; throws an `Error` naming the first violated constraint. `operation` is e.g. `'generate-v3'`, `'edit-v3'` or `'describe'`.
+- `OPERATION_CONSTRAINTS`: the per-operation constraints table for the v1 models that `validateOperationParams` reads.
+- `V2ValidationParams`: the parameter type `validateV2Params` accepts (camelCase, as passed to the API methods).
+- `PixelBounds`: the `{ maxPixels, maxSide? }` type returned by `preciseEditBounds`.
 - `preciseEditBounds(model, quality?)`: the whole-image edit bound, `{ maxPixels, maxSide? }`, for `'4.5'` or `'4.6'`.
 - `V2_LIMITS`: the documented limits (prompt lengths, image counts, file sizes, pixel bounds, video durations).
 - Option lists, as read-only tuples: `RENDERING_SPEEDS`, `STYLE_PRESETS`, `V4_RESOLUTIONS`, `V45_QUALITIES`, `V46_SIZES`, `UPSCALE_FACTORS`, `MINIMAX_H3_RESOLUTIONS`, `SEEDANCE_25_RESOLUTIONS`, and the rest (`ASPECT_RATIOS`, `V4_ASPECT_RATIOS`, `AUTO_STYLE_TYPES`, `SVG_QUALITIES`, ...). Derive a literal union with `typeof V46_SIZES[number]`; test membership of an arbitrary string with `isOneOf(V46_SIZES, value)`.
@@ -406,6 +416,7 @@ await downloadToFile('https://ideogram.ai/api/images/ephemeral/example.mp4', './
 - **`upscale()` moved to the v2 API** (`/v2/image/upscale/auto`), because Ideogram retired the v1 endpoint. It takes only `image`, `upscaleFactor` (`'x2'` | `'x4'` | `'x8'`), `seed` and the v2 options (`async`, `webhookUrl`, `dryRun`, `timeoutMs`). Passing `prompt`, `resemblance`, `detail`, `magicPromptOption` or `numImages` throws. It returns an `UpscaleResponse`; use `extractImageUrls` for the URL. On the CLI, `--prompt`, `--resemblance`, `--detail`, `--magic-prompt-option` and `--num-images` are removed from `upscale`, and output goes to `upscale-auto/` (was `upscale/`).
 - **`ENDPOINTS.UPSCALE` is now `ENDPOINTS.UPSCALE_AUTO`**, and the `'upscale'` entry is gone from `OPERATION_CONSTRAINTS`.
 - **Option constants are literal tuples** (`as const`) rather than `string[]`, so `(typeof RENDERING_SPEEDS)[number]` is a union of the literal values.
+- **`IdeogramApiOptions` is removed.** The type was exported but nothing accepted it. The constructor is `new IdeogramAPI(apiKey, baseUrl?, logLevel?)`.
 - **Importing the library no longer loads `.env` files.** Only the `ideogram` CLI reads them, and only `IDEOGRAM_API_KEY` (cwd `.env`, then `~/.ideogram/.env`); other variables in those files are not loaded, so `IDEOGRAM_OUTPUT_DIR` or `NODE_ENV` set in a `.env` file no longer take effect (set them in the real environment). CLI precedence is unchanged: `--api-key`, then `IDEOGRAM_API_KEY` in the environment, then cwd `.env`, then `~/.ideogram/.env`. Library users must pass the key or set it themselves.
 - **`buildFormData` names and types file parts from their bytes.** Each file part is now `image.png` / `image/png`, `audio.wav` / `audio/wav` and so on, where 1.x sent every file as `image.jpg`. Bytes it does not recognize still go as `image.jpg` / `image/jpeg`.
 - **CLI helpers removed from `ideogram-api/utils`:** `saveImage`, `generateFilename`, `ensureDirectory`, `saveMetadata`, `pause`, `createSpinner` and the `logger` re-export. They were CLI plumbing and moved to an internal CLI module. Copy the few lines you need, or use Node's `fs` (`fs.mkdir(dir, { recursive: true })`, `fs.writeFile`). `setLogLevel` is still exported.
@@ -506,7 +517,7 @@ npm install
 npm link  # For global CLI access
 ```
 
-## Quick Start
+## CLI Tour
 
 ### Using the CLI
 
@@ -1077,7 +1088,7 @@ datasets/ideogram/
 
 v2 metadata files record `generationId` and `usageCostUsdMicros` (when Ideogram reports it), and list each result under `response.items` with its `objectType`, saved `path` and, for videos, the measured `duration` and `aspectRatio`.
 
-Output files never overwrite each other: each item gets its own name (the index survives truncation of long prompts), and an existing file is never replaced. Before writing anything to disk, the CLI prints the generation id and every result URL, so a disk error cannot lose a billed result; a `--dry-run` that comes back with a real result is reported loudly and saved, and the command exits non-zero. Every CLI command writes the metadata file (generation id and every URL where there is one) before downloading, so a failed download keeps the record; if the CLI cannot remove a partial or empty output file after a failed write, it warns and names the file.
+Output files never overwrite each other: each item gets its own name (the index survives truncation of long prompts), and an existing file is never replaced. Before writing anything to disk, the CLI prints the generation id and every result URL, so a disk error cannot lose a billed result; a `--dry-run` that comes back with a real result is reported loudly and saved, and the command exits non-zero. Every CLI command writes the metadata file (generation id and every URL where there is one) before downloading, so a failed download keeps the record. Metadata files are written atomically (temp file, then rename), so a failed write such as a full disk leaves the previous record intact. A request that returns zero results prints the generation id, writes the metadata file, reports an error and exits 1. If the CLI cannot remove a partial or empty output file after a failed write, it warns and names the file.
 
 **Metadata Format:**
 
@@ -1138,7 +1149,7 @@ All image URLs are validated before processing to prevent attacks:
 - **Private IP ranges**: `10.x`, `192.168.x`, `172.16-31.x`, `169.254.x`
 - **Cloud metadata endpoints**: `169.254.169.254`, `metadata.google.internal`
 - **IPv4-Mapped IPv6 bypass prevention**: Detects `[::ffff:127.0.0.1]` attempts
-- **Reserved ranges**: Addresses are parsed, so IPv4-mapped IPv6 in any spelling and unspecified, unique-local, link-local, CGNAT and other reserved ranges are refused
+- **Reserved ranges**: Addresses are parsed, so IPv4-mapped IPv6 in any spelling and unspecified, unique-local, link-local, CGNAT, NAT64, 6to4, IPv4-translated, Teredo, documentation and other reserved ranges are refused
 - **DNS resolution check**: Resolves the hostname and refuses it if any address it resolves to is blocked. The connection is not pinned to the checked address, so a host that changes its DNS answer between the check and the download (DNS rebinding) is not prevented
 
 ### Image File Validation
@@ -1180,7 +1191,7 @@ The service includes comprehensive error handling with clear messages:
 
 ### Synchronous Responses
 
-The Ideogram 3.0 operations and the v2 image endpoints (unless you set `async`) return results directly, so a single `try`/`catch` covers the whole call. SVG and video do not: see [Synchronous, async and always-async](#synchronous-async-and-always-async).
+The Ideogram 3.0 operations and the v2 image endpoints (unless you set `async`) return results directly, so a single `try`/`catch` covers the whole call. If such a request fails after it was sent (timeout, reset, unreadable body), there is no generation id to recover the result with and it may still have been billed; for costly or long requests use `async: true` and poll. SVG and video do not: see [Synchronous, async and always-async](#synchronous-async-and-always-async).
 
 ```typescript
 try {
@@ -1405,9 +1416,6 @@ import { IdeogramAPI, extractImages, extractDescriptions } from 'ideogram-api';
 
 // Import types for type annotations
 import type {
-  // API Options
-  IdeogramApiOptions,
-
   // Parameter types
   GenerateParams,
   EditParams,
@@ -1467,7 +1475,7 @@ images.forEach((img: ImageData) => {
 
 | Category | Types |
 |----------|-------|
-| **Configuration** | `IdeogramApiOptions` |
+| **Configuration** | none: the constructor is `new IdeogramAPI(apiKey, baseUrl?, logLevel?)` |
 | **Parameters** | `GenerateParams`, `EditParams`, `RemixParams`, `ReframeParams`, `ReplaceBackgroundParams`, `UpscaleParams`, `DescribeParams` |
 | **Responses** | `GenerationResponse`, `DescribeResponse`, `ImageData`, `Description` |
 | **Enums/Unions** | `RenderingSpeed`, `MagicPromptOption`, `StyleType`, `DescribeModelVersion` |
@@ -1644,6 +1652,13 @@ Contributions welcome! Please follow the existing code patterns and include test
 - With `NODE_ENV=production`, messages for possibly-billed failures say the request may have run and been billed and to check usage before retrying
 - The CLI prints the generation id and every result URL before writing anything to disk; a `--dry-run` that returns a real result is reported loudly and saved, and the command exits non-zero
 - Requires Node.js 22 or later; see [Migrating from 1.x](#migrating-from-1x)
+- Removed the unused `IdeogramApiOptions` type (nothing accepted it); the constructor is `new IdeogramAPI(apiKey, baseUrl?, logLevel?)`
+- A v2 call with `dryRun: true` that gets back a real result throws `IdeogramAPIError` with `code: 'EDRYRUNIGNORED'`, `possiblyBilled: true`, `generationId` when present and the response as `error.result`
+- Every error from `waitForGeneration` has `possiblyBilled: true` (the generation was already submitted) and carries `generationId`; resume with `getGeneration` / `waitForGeneration`, never resubmit. An expired wait reports "Timed out after ..."
+- CLI: a request that returns zero results prints the generation id, writes the metadata file, reports an error and exits 1 (was 0)
+- CLI metadata files are written atomically (temp file, then rename), so a failed write leaves the previous record intact
+- The CLI no longer logs the billing warning for status polls, and v1 commands no longer print "✗ ... failed" after a billed success when saving fails
+- The SSRF guard also refuses NAT64, 6to4, IPv4-translated, Teredo and documentation ranges
 
 ### v1.0.3
 
