@@ -676,7 +676,7 @@ ideogram upscale --image ./photo.jpg --upscale-factor x2
 
 ## Changelog
 
-`CHANGELOG.md` is generated from commit messages by semantic-release on each release. Release notes are on [GitHub releases](https://github.com/aself101/ideogram-api/releases).
+`CHANGELOG.md` lists the changes in each release; "Migrating from 1.x" above covers the 2.0 breaking changes.
 
 ## Links, contributing and license
 

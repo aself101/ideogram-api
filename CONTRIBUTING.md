@@ -10,7 +10,9 @@ Contributions are welcome. Follow the existing code patterns and include tests f
 
 ## Commits and releases
 
-Commit messages drive releases: semantic-release cuts each version from conventional commits and generates `CHANGELOG.md`. `feat:` makes a minor release and `fix:` a patch. A `BREAKING CHANGE:` footer makes a major release. The footer must say what broke and what a user does instead (the removed or changed name, the new behaviour, the migration), because its text becomes the release note. Never squash-merge commits that carry footers: the squash drops or merges the footers and the major bump with them. Merge them as they are.
+Releases are cut and published by hand by the maintainer: the version in `package.json` is set with `npm version`, `CHANGELOG.md` is written by hand ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/)), and `npm publish` runs the build first (`prepublishOnly`). CI only typechecks, tests and builds.
+
+Use conventional commit messages (`feat:`, `fix:`, `docs:`, ...). Mark a change that breaks callers with a `BREAKING CHANGE:` footer that says what broke and what a user does instead; the maintainer reads these when writing the changelog and choosing the version, so do not squash them away.
 
 ## Testing
 

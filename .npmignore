@@ -10,7 +10,6 @@ coverage/
 # Config files
 tsconfig.json
 jest.config.js
-.releaserc.json
 .eslintrc.js
 .prettierrc
 vitest.config.js
