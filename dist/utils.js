@@ -6,7 +6,7 @@
  */
 import fs from 'fs/promises';
 import { logger, normalizeLogLevel } from './logger.js';
-import { assertMaxBytes, assertTimerMs, fetchFollowingRedirects, readBodyWithLimit, streamToFile } from './http.js';
+import { assertMaxBytes, assertTimerMs, fetchFollowingRedirects, readBodyWithLimit, sanitizeServerText, streamToFile } from './http.js';
 import { imageSize } from 'image-size';
 import { imageSizeFromFile } from 'image-size/fromFile';
 import { lookup } from 'dns/promises';
@@ -170,7 +170,7 @@ export async function validateImageUrl(url) {
         parsed = new URL(url);
     }
     catch (error) {
-        throw new Error(`Invalid URL: ${url}`, { cause: error });
+        throw new Error(`Invalid URL: ${sanitizeServerText(String(url))}`, { cause: error });
     }
     // Only allow HTTPS (not HTTP)
     if (parsed.protocol !== 'https:') {

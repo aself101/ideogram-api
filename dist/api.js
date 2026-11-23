@@ -86,11 +86,12 @@ export function classifyPollFailure(failure) {
 }
 /**
  * The v1 `numImages` to send: 1 when unset (undefined or null), otherwise the
- * value, which must be an integer from 1 to 8. An explicit 0 used to become a
+ * value, which must be an integer from 1 to 8 (a string "1".."8" is accepted). An explicit 0 used to become a
  * billed 1-image request through `|| 1`; now it is refused before anything is sent.
  */
 function v1NumImages(value) {
-    const n = value ?? 1;
+    // 1.x forwarded numeric strings (the multipart methods sent them as-is): keep accepting "1".."8".
+    const n = typeof value === 'string' && /^[1-8]$/.test(value) ? Number(value) : (value ?? 1);
     const { min, max } = V2_LIMITS.numImages;
     if (typeof n !== 'number' || !Number.isInteger(n) || n < min || n > max) {
         throw new Error(`numImages must be an integer between ${min} and ${max} (got ${describeValue(n)})`);
@@ -1205,6 +1206,10 @@ export class IdeogramAPI {
         const deadline = Date.now() + timeoutMs;
         let interval = baseInterval;
         let consecutiveFailures = 0;
+        // The id is caller- or server-supplied: show it sanitized, so a line break in it cannot forge output lines.
+        const shownId = serverText(generationId);
+        // The last retried poll failure, kept so a deadline reached while retrying says why.
+        let lastPollError;
         for (;;) {
             let status;
             try {
@@ -1213,22 +1218,25 @@ export class IdeogramAPI {
                 status = await this.getGeneration(generationId, { timeoutMs: pollTimeout });
                 interval = baseInterval;
                 consecutiveFailures = 0;
+                lastPollError = undefined;
             }
             catch (error) {
                 if (error instanceof IdeogramAPIError && error.status === 429) {
                     // Double (at least 1s, at most 30s), but never poll sooner than the
                     // current interval: a base interval above 30s must not be shortened.
+                    lastPollError = error;
                     interval = Math.max(interval, Math.min(Math.max(interval * 2, 1000), 30000));
                     this.logger.warn(`Rate limited while polling ${serverText(generationId)}; retrying in ${interval}ms`);
                 }
                 else if (error instanceof IdeogramAPIError && error.code === 'ETIMEDOUT' && Date.now() >= deadline) {
                     // The capped last poll ran into the overall deadline: that is the wait timing out.
-                    throw new IdeogramAPIError(`Timed out after ${timeoutMs}ms waiting for generation ${generationId} (it may still complete; poll getGeneration later)`, { generationId, possiblyBilled: true, resumable: true, cause: error });
+                    throw new IdeogramAPIError(`Timed out after ${timeoutMs}ms waiting for generation ${shownId} (it may still complete; poll getGeneration later)`, { generationId, possiblyBilled: true, resumable: true, cause: error });
                 }
                 else if (error instanceof IdeogramAPIError &&
                     isRetryablePollFailure(error) &&
                     consecutiveFailures + 1 < MAX_POLL_FAILURES) {
                     consecutiveFailures++;
+                    lastPollError = error;
                     interval = Math.max(interval, Math.min(Math.max(interval * 2, 1000), 30000));
                     this.logger.warn(`Poll of ${serverText(generationId)} failed (${error.status ?? error.code ?? 'no response'}): retrying in ${interval}ms (failure ${consecutiveFailures}/${MAX_POLL_FAILURES})`);
                 }
@@ -1238,16 +1246,16 @@ export class IdeogramAPI {
                     const { resumable } = classifyPollFailure(error);
                     let message;
                     if (httpStatus === 404) {
-                        message = `Generation ${generationId} not found: check the id (if you submitted it, it may still have been billed)`;
+                        message = `Generation ${shownId} not found: check the id (if you submitted it, it may still have been billed)`;
                     }
                     else if (httpStatus === 401 || httpStatus === 403) {
-                        message = `${error.message} (while polling generation ${generationId}; fix the key, then resume with get-generation)`;
+                        message = `${error.message} (while polling generation ${shownId}; fix the key, then resume with get-generation)`;
                     }
                     else if (!resumable) {
-                        message = `${error.message} (while polling generation ${generationId}; polling again will not succeed; if you submitted it, it may still have been billed)`;
+                        message = `${error.message} (while polling generation ${shownId}; polling again will not succeed; if you submitted it, it may still have been billed)`;
                     }
                     else {
-                        message = `${error.message} (while polling generation ${generationId}; it may still complete, poll getGeneration later)`;
+                        message = `${error.message} (while polling generation ${shownId}; it may still complete, poll getGeneration later)`;
                     }
                     // The id names something that may have been submitted (and billed): never resubmit.
                     throw new IdeogramAPIError(message, {
@@ -1273,13 +1281,13 @@ export class IdeogramAPI {
                 }
                 catch (error) {
                     // The generation was already submitted and billed: a throwing callback must not hide its id.
-                    throw new IdeogramAPIError(`onPoll callback threw while waiting for generation ${generationId} (it may still complete; poll getGeneration later): ${toError(error).message}`, { generationId, possiblyBilled: true, resumable: true, cause: error });
+                    throw new IdeogramAPIError(`onPoll callback threw while waiting for generation ${shownId} (it may still complete; poll getGeneration later): ${toError(error).message}`, { generationId, possiblyBilled: true, resumable: true, cause: error });
                 }
                 if (status.status === 'completed') {
                     return status;
                 }
                 if (status.status === 'failed') {
-                    throw new IdeogramAPIError(`Generation ${generationId} failed${status.failure_reason ? `: ${sanitizeServerText(String(status.failure_reason))}` : ''}`, {
+                    throw new IdeogramAPIError(`Generation ${shownId} failed${status.failure_reason ? `: ${sanitizeServerText(String(status.failure_reason))}` : ''}`, {
                         failureReason: status.failure_reason,
                         body: status,
                         generationId,
@@ -1289,7 +1297,7 @@ export class IdeogramAPI {
                 }
             }
             if (Date.now() + interval > deadline) {
-                throw new IdeogramAPIError(`Timed out after ${timeoutMs}ms waiting for generation ${generationId} (it may still complete; poll getGeneration later)`, { generationId, possiblyBilled: true, resumable: true });
+                throw new IdeogramAPIError(`Timed out after ${timeoutMs}ms waiting for generation ${shownId}${lastPollError ? ` (the last poll failed: ${lastPollError.status ?? lastPollError.code ?? 'no response'})` : ''} (it may still complete; poll getGeneration later)`, { generationId, possiblyBilled: true, resumable: true, cause: lastPollError });
             }
             await new Promise((resolve) => setTimeout(resolve, interval));
         }

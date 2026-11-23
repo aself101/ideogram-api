@@ -24,9 +24,10 @@ export function describeError(err) {
     }
     const rawCode = err.code ?? cause?.code;
     const code = typeof rawCode === 'string' && rawCode && !message.includes(rawCode) ? ` [${rawCode}]` : '';
-    // Server text was already flattened where it entered api.ts; what is left is ours, and the
-    // missing-key help is deliberately multi-line, so keep LF (62d0515 collapsed it to one line).
-    return sanitizeServerText(`${message}${code}`, { keepNewlines: true });
+    // An API error can carry server text (ids, messages): flatten it, so a line break the server
+    // chose cannot forge an output line. Client-side errors (missing key, validation) are ours and
+    // some are deliberately multi-line, so they keep LF (62d0515 collapsed the missing-key help).
+    return sanitizeServerText(`${message}${code}`, { keepNewlines: !(err instanceof IdeogramAPIError) });
 }
 /** What an id must look like before it is pasted into a shell command: URL-safe base64, which is what Ideogram returns. */
 const SAFE_GENERATION_ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -533,7 +534,7 @@ export async function executeV2(operation, options, globalOptions) {
         }
         const generationKind = 'generation_kind' in result ? result.generation_kind : undefined;
         if ('width' in result) {
-            console.log(`Output: ${result.width}x${result.height}`);
+            console.log(`Output: ${serverText(result.width)}x${serverText(result.height)}`);
         }
         if (result.data) {
             await saveV2Results(result.data, operation, name, globalOptions.outputDir, {
@@ -762,6 +763,7 @@ export async function executeGetGeneration(generationId, options, globalOptions)
                 generationId,
                 usageCostUsdMicros: status.usage_cost_usd_micros,
                 parameters: { generationId },
+                fromGetGeneration: true,
             });
         }
         else if (status.status === 'pending') {
@@ -945,7 +947,9 @@ async function saveV2Results(items, operation, promptOrName, baseOutputDir, meta
         const savedCount = records.filter((r) => typeof r.path === 'string').length;
         const id = typeof meta.generationId === 'string' && meta.generationId !== '' ? meta.generationId : undefined;
         console.error(`✗ Download failed after ${savedCount}/${items.length} item(s) saved. ` +
-            'The generation completed and was billed: do not run the command again.\n' +
+            (meta.fromGetGeneration
+                ? 'Fetching a result again is not billed: run the command again.\n'
+                : 'The generation completed and was billed: do not run the command again.\n') +
             (id !== undefined
                 ? `  Fetch the result again with: ${getGenerationCommand(id)}\n${generationIdLine(id)}` +
                     `  The result URLs are also in ${metadataPath}`

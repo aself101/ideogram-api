@@ -128,6 +128,13 @@ describe('executeV2 dispatch: each operation reaches its endpoint', () => {
     expect(out()).toContain('Output: 2048x1024');
   });
 
+  it('upscale-auto prints server-chosen dimensions sanitized', async () => {
+    route({ api: () => ({ generation_id: 'gu', width: '\u001b[2J\u001b[31mPWNED', height: '\u202e1' }) });
+    await executeV2('upscale-auto', { image: fixture(pngOf(1024, 512)), upscaleFactor: 'x2' }, global());
+    expect(out()).toContain('Output: PWNEDx1');
+    expect(out()).not.toMatch(/[\u001b\u202e]/);
+  });
+
   it('an unknown operation is refused before any request', async () => {
     await executeV2('generate-svg', { prompt: 'p' }, global());
     expect(exitSpy).toHaveBeenCalledWith(1);

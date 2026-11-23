@@ -255,7 +255,9 @@ export function sanitizeServerText(text, options = {}) {
         // C1 CSI: parameter bytes and a final byte only. Intermediate bytes are not consumed, so a lone
         // U+009B followed by ordinary text ("\u009b end") does not eat the first letter of that text.
         .replace(/\u009b[0-?]*[@-~]/g, '')
-        .replace(/[\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2069\u061c\ufeff]/g, '');
+        // Invisible format characters: bidi controls, zero-widths, soft hyphen, Hangul fillers, tag characters.
+        .replace(/[\u00ad\u115f\u1160\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2069\u061c\u3164\uffa0\ufeff]/g, '')
+        .replace(/[\u{e0000}-\u{e007f}]/gu, '');
     const lines = options.keepNewlines
         ? stripped.replace(/\r\n/g, '\n').replace(/\r+/g, ' ')
         : stripped.replace(/[\r\n]+/g, ' ');
@@ -272,6 +274,12 @@ export function serverText(value) {
         return sanitizeServerText(value);
     if (typeof value === 'number')
         return String(value);
-    return sanitizeServerText(String(value));
+    try {
+        return sanitizeServerText(String(value));
+    }
+    catch {
+        // An object whose toString is not callable: a failed print must not lose the id after billing.
+        return '[unprintable]';
+    }
 }
 //# sourceMappingURL=http.js.map
